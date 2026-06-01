@@ -1,0 +1,24 @@
+const cron = require('node-cron');
+const agentService = require('./agentService');
+const escalationService = require('./escalationService');
+
+function startScheduler() {
+  // Rent reminders: daily at 8:00 AM
+  cron.schedule('0 8 * * *', () => {
+    agentService.runRentReminderCheck().catch(console.error);
+  });
+
+  // Lease renewal check: daily at 9:00 AM
+  cron.schedule('0 9 * * *', () => {
+    agentService.runLeaseRenewalCheck().catch(console.error);
+  });
+
+  // Escalation 24h/48h reminders: every hour
+  cron.schedule('0 * * * *', () => {
+    escalationService.checkEscalationReminders().catch(console.error);
+  });
+
+  console.log('[Scheduler] Agent scheduler started — reminders 8AM, renewals 9AM, escalation check hourly');
+}
+
+module.exports = { startScheduler };
