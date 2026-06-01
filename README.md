@@ -30,7 +30,7 @@ A production-style landlord property management MVP built with React, Node.js, P
 ### 1. Clone / Navigate to project
 
 ```bash
-cd Rentora
+cd farik
 ```
 
 ---
@@ -122,7 +122,7 @@ npm run dev
 ## Project Structure
 
 ```
-Rentora/
+farik/
 ├── backend/
 │   ├── prisma/
 │   │   ├── schema.prisma          # Full Prisma schema
