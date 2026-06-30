@@ -87,7 +87,6 @@ const LandingPage = () => (
           </div>
           <span className="font-semibold text-slate-700 text-sm">Farik</span>
         </div>
-        <p className="text-xs text-slate-400">Built as a full-stack MVP showcase.</p>
       </div>
     </footer>
   </div>
