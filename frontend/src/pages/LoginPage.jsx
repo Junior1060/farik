@@ -5,8 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import { useForm } from 'react-hook-form';
 
 const FEATURES = [
+  'SMS-first — no app for tenants to download',
   'Automated rent collection & reminders',
-  'AI-powered tenant management',
   'Real-time maintenance tracking',
   'Professional notices & lease drafting',
 ];
@@ -62,7 +62,7 @@ const LoginPage = () => {
               Property management<br />made effortless.
             </h2>
             <p className="text-indigo-200 mt-4 text-lg leading-relaxed">
-              Collect rent, manage tenants, and automate your portfolio — all in one clean dashboard.
+              Your tenants text. Farik handles the rest — rent collection, maintenance, and notices on autopilot.
             </p>
           </div>
 
@@ -78,20 +78,10 @@ const LoginPage = () => {
           </div>
         </div>
 
-        {/* Testimonial */}
-        <div className="relative bg-white/10 rounded-2xl p-5 border border-white/20">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0 font-bold text-white text-sm">
-              SL
-            </div>
-            <div>
-              <p className="text-white text-sm font-medium leading-relaxed">
-                "Farik reduced my admin time by 80%. I haven't chased a rent payment in months."
-              </p>
-              <p className="text-indigo-300 text-xs mt-1.5">Sarah L. · 14 units in Vancouver</p>
-            </div>
-          </div>
-        </div>
+        {/* Trust line */}
+        <p className="relative text-indigo-300 text-sm">
+          Built in Saskatchewan for small landlords.
+        </p>
       </div>
 
       {/* Right — Auth form */}
@@ -184,12 +174,12 @@ const LoginPage = () => {
             </div>
           </div>
 
-          <p className="text-center text-sm text-slate-500 mt-5">
-            New landlord?{' '}
-            <Link to="/register" className="text-indigo-600 hover:text-indigo-700 font-semibold">
+          <div className="mt-6 text-center">
+            <p className="text-sm text-slate-500 mb-3">New landlord?</p>
+            <Link to="/register" className="btn-secondary w-full justify-center py-2.5">
               Create account
             </Link>
-          </p>
+          </div>
         </div>
       </div>
     </div>
