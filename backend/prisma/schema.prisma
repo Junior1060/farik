@@ -301,6 +301,7 @@ model MaintenanceRequest {
   unitId      String
   title       String
   description String
+  photos      String[]            @default([])
   status      MaintenanceStatus   @default(OPEN)
   priority    MaintenancePriority @default(MEDIUM)
   resolvedAt  DateTime?

@@ -50,6 +50,7 @@ const create = async (req, res, next) => {
   try {
     const tenantId = req.user.tenantProfile.id;
     const data = requestSchema.parse(req.body);
+    const photos = (req.files || []).map((f) => `/uploads/maintenance/${f.filename}`);
 
     const request = await prisma.maintenanceRequest.create({
       data: {
@@ -57,6 +58,7 @@ const create = async (req, res, next) => {
         unitId: data.unitId,
         title: data.title,
         description: data.description,
+        photos,
         priority: data.priority || 'MEDIUM',
         status: 'OPEN',
       },

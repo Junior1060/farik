@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Home, CreditCard, FileText, Bell, MessageSquare, Wrench,
-  LogOut, Building2, Send, CheckCircle, AlertCircle, Clock, User, Lock
+  LogOut, Building2, Send, CheckCircle, AlertCircle, Clock, User, Lock,
+  ImagePlus, X
 } from 'lucide-react';
 import { updateProfile, changePassword } from '../services/profileService';
 import { createCheckoutSession } from '../services/stripeService';
@@ -19,7 +20,7 @@ import { getMaintenanceRequests, createMaintenanceRequest } from '../services/ma
 import { getConversations, getThread, sendMessage } from '../services/messageService';
 import { formatDate, formatRelative, formatCurrency, fullName, getInitials } from '../utils/formatters';
 import { useForm } from 'react-hook-form';
-import api from '../services/api';
+import api, { assetUrl } from '../services/api';
 
 const TenantPortalPage = () => {
   const { user, logout } = useAuth();
@@ -30,6 +31,7 @@ const TenantPortalPage = () => {
   const [threadData, setThreadData] = useState(null);
   const [sending, setSending] = useState(false);
   const [activeConvId, setActiveConvId] = useState(null);
+  const [maintPhotos, setMaintPhotos] = useState([]); // { file, url }[]
   const bottomRef = useRef(null);
 
   const profile = user?.profile;
@@ -66,16 +68,41 @@ const TenantPortalPage = () => {
     navigate('/login');
   };
 
-  const onMaintSubmit = async (values) => {
-    const unitId = activeLease?.unit?.id || activeLease?.unitId;
-    await createMaintenanceRequest({
-      unitId,
-      title: values.title,
-      description: values.description,
-      priority: values.priority,
+  const handlePhotoSelect = (e) => {
+    const picked = Array.from(e.target.files || []).map((file) => ({
+      file,
+      url: URL.createObjectURL(file),
+    }));
+    setMaintPhotos((prev) => [...prev, ...picked].slice(0, 8));
+    e.target.value = ''; // allow re-selecting the same file
+  };
+
+  const removePhoto = (idx) => {
+    setMaintPhotos((prev) => {
+      if (prev[idx]) URL.revokeObjectURL(prev[idx].url);
+      return prev.filter((_, i) => i !== idx);
     });
+  };
+
+  const closeMaintModal = () => {
     setShowMaintModal(false);
     reset();
+    maintPhotos.forEach((p) => URL.revokeObjectURL(p.url));
+    setMaintPhotos([]);
+  };
+
+  const onMaintSubmit = async (values) => {
+    const unitId = activeLease?.unit?.id || activeLease?.unitId;
+    await createMaintenanceRequest(
+      {
+        unitId,
+        title: values.title,
+        description: values.description,
+        priority: values.priority,
+      },
+      maintPhotos.map((p) => p.file),
+    );
+    closeMaintModal();
     refetchMaint();
   };
 
@@ -311,6 +338,19 @@ const TenantPortalPage = () => {
                       </div>
                       <p className="text-sm text-slate-500 mt-1">{req.unit?.name} · {req.unit?.property?.name}</p>
                       <p className="text-sm text-slate-600 mt-2">{req.description}</p>
+                      {req.photos?.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {req.photos.map((src, i) => (
+                            <a key={i} href={assetUrl(src)} target="_blank" rel="noreferrer">
+                              <img
+                                src={assetUrl(src)}
+                                alt={`Photo ${i + 1}`}
+                                className="w-16 h-16 rounded-lg object-cover border border-slate-200 hover:opacity-90 transition-opacity"
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       <p className="text-xs text-slate-400 mt-2">Submitted {formatRelative(req.createdAt)}</p>
                     </div>
                   </div>
@@ -401,7 +441,7 @@ const TenantPortalPage = () => {
       </div>
 
       {/* Maintenance Request Modal */}
-      <Modal open={showMaintModal} onClose={() => { setShowMaintModal(false); reset(); }} title="Submit Maintenance Request">
+      <Modal open={showMaintModal} onClose={closeMaintModal} title="Submit Maintenance Request">
         <form onSubmit={handleSubmit(onMaintSubmit)} className="space-y-4">
           <div>
             <label className="label">Issue Title *</label>
@@ -419,8 +459,33 @@ const TenantPortalPage = () => {
               <option value="HIGH">High – Urgent</option>
             </select>
           </div>
+          <div>
+            <label className="label">Photos (optional)</label>
+            <div className="flex flex-wrap gap-2">
+              {maintPhotos.map((p, idx) => (
+                <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-slate-200">
+                  <img src={p.url} alt={`Attachment ${idx + 1}`} className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removePhoto(idx)}
+                    className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-black/80 text-white rounded-full w-4 h-4 flex items-center justify-center"
+                    aria-label="Remove photo"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+              {maintPhotos.length < 8 && (
+                <label className="w-16 h-16 rounded-lg border-2 border-dashed border-slate-300 hover:border-indigo-400 text-slate-400 hover:text-indigo-500 flex items-center justify-center cursor-pointer transition-colors">
+                  <ImagePlus size={18} />
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={handlePhotoSelect} />
+                </label>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mt-1.5">Add up to 8 photos to help explain the issue (max 10MB each).</p>
+          </div>
           <div className="flex gap-3 justify-end pt-2">
-            <button type="button" className="btn-secondary" onClick={() => { setShowMaintModal(false); reset(); }}>Cancel</button>
+            <button type="button" className="btn-secondary" onClick={closeMaintModal}>Cancel</button>
             <button type="submit" className="btn-primary" disabled={isSubmitting}>
               {isSubmitting ? 'Submitting...' : 'Submit Request'}
             </button>

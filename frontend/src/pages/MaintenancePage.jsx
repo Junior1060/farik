@@ -8,6 +8,7 @@ import EmptyState from '../components/ui/EmptyState';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import useFetch from '../hooks/useFetch';
 import { getMaintenanceRequests, updateMaintenanceRequest } from '../services/maintenanceService';
+import { assetUrl } from '../services/api';
 import { formatDate, formatRelative, fullName } from '../utils/formatters';
 
 const statusOptions = ['OPEN', 'IN_PROGRESS', 'RESOLVED'];
@@ -126,6 +127,20 @@ const MaintenancePage = () => {
                   </div>
 
                   <p className="text-sm text-slate-600 mt-2 leading-relaxed">{req.description}</p>
+
+                  {req.photos?.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {req.photos.map((src, i) => (
+                        <a key={i} href={assetUrl(src)} target="_blank" rel="noreferrer">
+                          <img
+                            src={assetUrl(src)}
+                            alt={`Photo ${i + 1}`}
+                            className="w-16 h-16 rounded-lg object-cover border border-slate-200 hover:opacity-90 transition-opacity"
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="flex items-center gap-4 mt-2">
                     <p className="text-xs text-slate-400">Submitted {formatRelative(req.createdAt)}</p>
