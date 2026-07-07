@@ -87,6 +87,7 @@ const LandingPage = () => (
           </div>
           <span className="font-semibold text-slate-700 text-sm">Farik</span>
         </div>
+        <p className="text-xs text-slate-400">© {new Date().getFullYear()} Farik. All rights reserved.</p>
       </div>
     </footer>
   </div>
