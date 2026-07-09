@@ -11,9 +11,28 @@ const router = express.Router();
 const UPLOADS_BASE = path.join(__dirname, '../../uploads');
 
 // Ensure upload subdirs exist
-['spreadsheets', 'documents'].forEach((sub) => {
+['spreadsheets', 'documents', 'onboarding'].forEach((sub) => {
   const dir = path.join(UPLOADS_BASE, sub);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
+// ── Universal AI ingest upload (any single file, or text-only) ────────────────
+const onboardingStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, path.join(UPLOADS_BASE, 'onboarding')),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const onboardingUpload = multer({
+  storage: onboardingStorage,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.xlsx', '.xls', '.csv', '.pdf', '.png', '.jpg', '.jpeg', '.webp'];
+    if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
+    else cb(new Error('Please upload a spreadsheet, PDF, or image (or paste your data as text).'));
+  },
 });
 
 // ── Spreadsheet upload (single file) ──────────────────────────────────────────
@@ -63,6 +82,14 @@ router.post(
   requireLandlord,
   spreadsheetUpload.single('file'),
   ctrl.parseSpreadsheet,
+);
+
+router.post(
+  '/ai',
+  authenticate,
+  requireLandlord,
+  onboardingUpload.single('file'),
+  ctrl.aiExtract,
 );
 
 router.post('/preview', authenticate, requireLandlord, ctrl.preview);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   DollarSign, Clock, Home, Wrench, CheckCircle2, AlertTriangle,
   Bot, Zap, MessageSquare, FileText, RotateCcw, ChevronRight, ArrowRight,
@@ -243,6 +243,13 @@ const DashboardPage = () => {
   const navigate = useNavigate();
   const { data: summary, loading: loadingSummary } = useFetch(getDashboardSummary);
   const { data: activityData, loading: loadingActivity } = useFetch(getDashboardActivity);
+
+  // First-run onboarding: a landlord with an empty account is sent straight to AI import.
+  useEffect(() => {
+    if (summary && summary.stats?.totalUnits === 0) {
+      navigate('/import', { replace: true });
+    }
+  }, [summary, navigate]);
 
   if (loadingSummary) return (
     <div className="flex items-center justify-center h-64">

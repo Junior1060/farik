@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const prisma = require('../lib/prisma');
+const onboardingAiService = require('../services/onboardingAiService');
 
 // ─── Column mapping: spreadsheet header → internal key ────────────────────────
 const COL_MAP = {
@@ -130,6 +131,31 @@ const parseSpreadsheet = (req, res, next) => {
     res.json({ rows, count: rows.length });
   } catch (err) {
     next(err);
+  }
+};
+
+// ─── POST /api/import/ai  (universal AI ingest — any file or pasted text) ──────
+const aiExtract = async (req, res, next) => {
+  try {
+    const text = req.body?.text;
+    if (!req.file && !(text && text.trim())) {
+      return res.status(400).json({ error: 'Upload a file or paste your data to continue.' });
+    }
+
+    const result = await onboardingAiService.extractPortfolio({ file: req.file, text });
+
+    if (!result.rows.length) {
+      return res.status(422).json({
+        error: 'I could not find any rental data in that. Try a clearer file, or paste your tenant list as text.',
+        warnings: result.warnings,
+      });
+    }
+
+    res.json(result);
+  } catch (err) {
+    next(err);
+  } finally {
+    if (req.file) { try { fs.unlinkSync(req.file.path); } catch (_) {} }
   }
 };
 
@@ -389,4 +415,4 @@ const confirm = async (req, res, next) => {
   }
 };
 
-module.exports = { getTemplate, parseSpreadsheet, preview, uploadDocuments, confirm };
+module.exports = { getTemplate, parseSpreadsheet, aiExtract, preview, uploadDocuments, confirm };

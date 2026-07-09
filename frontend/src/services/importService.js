@@ -29,6 +29,18 @@ export const previewRows = async (rows) => {
   return res.data;
 };
 
+// Universal AI ingest — accepts a file (FormData) or pasted text ({ text }).
+export const aiImport = async (payload) => {
+  if (payload instanceof FormData) {
+    const res = await api.post('/import/ai', payload, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data;
+  }
+  const res = await api.post('/import/ai', payload);
+  return res.data;
+};
+
 export const uploadDocuments = async (formData) => {
   const res = await api.post('/import/documents', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },

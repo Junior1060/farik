@@ -4,10 +4,10 @@ import {
   Upload, FileSpreadsheet, ChevronRight, ChevronLeft, CheckCircle2,
   AlertCircle, AlertTriangle, Download, X, FileText, Users,
   Building2, CreditCard, Home, ArrowRight, RotateCcw, Info,
+  Sparkles, Type,
 } from 'lucide-react';
 import {
-  downloadTemplate, uploadSpreadsheet, previewRows,
-  uploadDocuments, confirmImport,
+  previewRows, uploadDocuments, confirmImport, aiImport,
 } from '../services/importService';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -196,52 +196,83 @@ function EditableCell({ value, field, rowIdx, error, editing, onStartEdit, onCom
 // ─── STEP 1: Upload spreadsheet ───────────────────────────────────────────────
 
 function UploadStep({ onParsed }) {
-  const [uploading, setUploading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+
+  const canSubmit = !!selectedFile || pasteText.trim().length > 0;
 
   const handleFiles = (files) => {
     setSelectedFile(files[0]);
     setError('');
   };
 
-  const handleUpload = async () => {
-    if (!selectedFile) return;
-    setUploading(true);
+  const handleSubmit = async () => {
+    if (!canSubmit || loading) return;
+    setLoading(true);
     setError('');
     try {
-      const fd = new FormData();
-      fd.append('file', selectedFile);
-      const data = await uploadSpreadsheet(fd);
-      onParsed(data.rows);
+      let data;
+      if (selectedFile) {
+        const fd = new FormData();
+        fd.append('file', selectedFile);
+        data = await aiImport(fd);
+      } else {
+        data = await aiImport({ text: pasteText.trim() });
+      }
+      onParsed(data.rows, { summary: data.summary, warnings: data.warnings });
     } catch (err) {
-      setError(err?.response?.data?.error || 'Failed to parse file. Check the format and try again.');
+      setError(err?.response?.data?.error || 'Farik could not read that. Try a clearer file, or paste your data as text.');
     } finally {
-      setUploading(false);
+      setLoading(false);
     }
   };
 
+  if (loading) {
+    return (
+      <div className="py-16 text-center">
+        <div className="w-14 h-14 mx-auto mb-5 rounded-2xl bg-indigo-100 flex items-center justify-center">
+          <Sparkles size={26} className="text-indigo-600 animate-pulse" />
+        </div>
+        <p className="text-sm font-semibold text-slate-800">Reading your data…</p>
+        <p className="text-xs text-slate-400 mt-1">Farik is finding your properties, units, tenants, and leases. This takes a few seconds.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Template download */}
+      {/* AI intro */}
       <div className="flex items-start gap-4 p-4 bg-indigo-50 border border-indigo-200 rounded-2xl">
-        <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center flex-shrink-0">
-          <FileSpreadsheet size={18} className="text-indigo-600" />
+        <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0">
+          <Sparkles size={18} className="text-white" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-slate-800">Start with our template</p>
-          <p className="text-xs text-slate-500 mt-0.5">Download the Excel template, fill it in, and upload it back. Each row = one unit + tenant + lease.</p>
+          <p className="text-sm font-semibold text-slate-800">Drop in your data — any format</p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            A spreadsheet, a PDF rent roll, or a photo of your records. Farik reads it and sets up your whole account — you just review and confirm.
+          </p>
         </div>
-        <button
-          onClick={downloadTemplate}
-          className="btn-secondary flex-shrink-0 text-xs py-2"
-        >
-          <Download size={13} /> Download Template
-        </button>
       </div>
 
-      {/* Upload zone */}
-      {selectedFile ? (
+      {/* Upload / paste */}
+      {showPaste ? (
+        <div className="space-y-2">
+          <textarea
+            autoFocus
+            rows={8}
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder={"Paste your tenant list here — however you keep it.\n\ne.g.\nMaple Court #101 — Alice Morgan, alice@email.com, $2,200/mo, lease Feb 2024–Feb 2025"}
+            className="input resize-none font-mono text-xs leading-relaxed"
+          />
+          <button onClick={() => { setShowPaste(false); setPasteText(''); }} className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">
+            <Upload size={12} /> Upload a file instead
+          </button>
+        </div>
+      ) : selectedFile ? (
         <div className="border-2 border-indigo-300 bg-indigo-50 rounded-2xl p-6 flex items-center gap-4">
           <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center flex-shrink-0">
             <FileText size={18} className="text-indigo-600" />
@@ -255,12 +286,17 @@ function UploadStep({ onParsed }) {
           </button>
         </div>
       ) : (
-        <DropZone
-          accept=".xlsx,.xls,.csv"
-          label="Drag your CSV or Excel file here"
-          hint="or click to browse · .xlsx, .xls, .csv up to 10 MB"
-          onFiles={handleFiles}
-        />
+        <>
+          <DropZone
+            accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp"
+            label="Drag your file here — spreadsheet, PDF, or image"
+            hint="or click to browse · .xlsx, .csv, .pdf, .png, .jpg up to 20 MB"
+            onFiles={handleFiles}
+          />
+          <button onClick={() => setShowPaste(true)} className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1.5">
+            <Type size={13} /> or paste your data as text instead
+          </button>
+        </>
       )}
 
       {error && (
@@ -270,28 +306,13 @@ function UploadStep({ onParsed }) {
         </div>
       )}
 
-      {/* Required columns reference */}
-      <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-        <div className="flex items-center gap-1.5 mb-2">
-          <Info size={13} className="text-slate-400" />
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Required columns</p>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {REQUIRED_FIELDS.map((f) => (
-            <span key={f.key} className="inline-flex items-center text-[11px] font-medium text-slate-600 bg-white border border-slate-200 px-2 py-0.5 rounded-lg">
-              {f.label}
-            </span>
-          ))}
-        </div>
-      </div>
-
       <div className="flex justify-end">
         <button
-          onClick={handleUpload}
-          disabled={!selectedFile || uploading}
+          onClick={handleSubmit}
+          disabled={!canSubmit}
           className="btn-primary px-6 py-2.5"
         >
-          {uploading ? 'Parsing…' : <>Parse File <ChevronRight size={15} /></>}
+          <Sparkles size={15} /> Read my data
         </button>
       </div>
     </div>
@@ -679,9 +700,11 @@ export default function ImportPage() {
   const [result, setResult] = useState(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState('');
+  const [aiMeta, setAiMeta] = useState(null);
 
-  const handleParsed = (rawRows) => {
+  const handleParsed = (rawRows, meta) => {
     setRows(validateRows(rawRows));
+    setAiMeta(meta || null);
     setStep(2);
   };
 
@@ -700,7 +723,7 @@ export default function ImportPage() {
   };
 
   const stepTitles = {
-    1: 'Upload Spreadsheet',
+    1: 'Upload Your Data',
     2: 'Review & Fix Errors',
     3: 'Lease Documents',
     4: 'Confirm Import',
@@ -713,7 +736,7 @@ export default function ImportPage() {
       <div className="mb-7">
         <h1 className="page-title">Import Properties</h1>
         <p className="text-slate-500 text-sm mt-1">
-          Onboard your properties, units, and tenants in minutes from a spreadsheet.
+          Drop in whatever you have — a spreadsheet, PDF, or photo — and Farik sets up your properties, units, and tenants for you.
         </p>
       </div>
 
@@ -732,12 +755,28 @@ export default function ImportPage() {
         {/* Steps */}
         {step === 1 && <UploadStep onParsed={handleParsed} />}
         {step === 2 && (
-          <PreviewStep
-            rows={rows}
-            onRowsChange={setRows}
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-          />
+          <>
+            {aiMeta?.summary && (
+              <div className="flex items-start gap-3 bg-indigo-50 border border-indigo-200 rounded-2xl px-4 py-3 mb-5">
+                <Sparkles size={16} className="text-indigo-600 flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-800">Farik read your data: {aiMeta.summary}</p>
+                  {aiMeta.warnings?.length > 0 && (
+                    <ul className="mt-1 text-xs text-amber-700 list-disc list-inside space-y-0.5">
+                      {aiMeta.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                    </ul>
+                  )}
+                  <p className="text-xs text-slate-500 mt-1">Review below and fix anything highlighted, then continue.</p>
+                </div>
+              </div>
+            )}
+            <PreviewStep
+              rows={rows}
+              onRowsChange={setRows}
+              onBack={() => setStep(1)}
+              onNext={() => setStep(3)}
+            />
+          </>
         )}
         {step === 3 && (
           <DocumentStep
