@@ -40,7 +40,7 @@ function sleep(ms) {
  * Single entry point for every Claude call in the app.
  * @returns {Promise<string>} raw assistant text (content[0].text)
  */
-async function createMessage({ system, messages, maxTokens = 1024, cachePrompt = true, retries = aiConfig.maxRetries }) {
+async function createMessage({ system, messages, maxTokens = 1024, cachePrompt = true, retries = aiConfig.maxRetries, timeoutMs = aiConfig.timeoutMs }) {
   if (aiConfig.provider === 'mock') {
     if (!mockHandler) {
       throw new Error('AI_PROVIDER=mock but no mock handler registered. Call aiClient.setMockHandler() first.');
@@ -58,7 +58,7 @@ async function createMessage({ system, messages, maxTokens = 1024, cachePrompt =
     try {
       const response = await withTimeout(
         client.messages.create({ model: aiConfig.model, max_tokens: maxTokens, system: systemBlocks, messages }),
-        aiConfig.timeoutMs,
+        timeoutMs,
       );
       const block = response.content?.[0];
       if (!block || block.type !== 'text') throw new Error('Unexpected AI response shape (no text block)');

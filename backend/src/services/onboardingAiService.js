@@ -127,6 +127,11 @@ async function extractPortfolio({ file, text }) {
   const rawText = await aiClient.createMessage({
     system: SYSTEM_PROMPT,
     maxTokens: 8000,
+    // Document/image extraction + a large max_tokens generation genuinely takes
+    // longer than routine triage calls — give it more room, but only one retry
+    // so a slow request doesn't compound into a multi-minute wait.
+    timeoutMs: 90000,
+    retries: 1,
     messages: [{ role: 'user', content }],
   });
 
