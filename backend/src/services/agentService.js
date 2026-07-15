@@ -1,8 +1,8 @@
-const Anthropic = require('@anthropic-ai/sdk');
 const prisma = require('../lib/prisma');
 const escalationService = require('./escalationService');
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const policyEngine = require('./policyEngine');
+const { callAndValidate, AiValidationError } = require('./ai/validate');
+const { messageClassificationSchema, maintenanceTriageSchema } = require('./ai/schemas');
 
 const SYSTEM_PROMPT = `You are Farik AI, an autonomous property management assistant. You help landlords manage rental properties by handling routine tasks automatically.
 
@@ -58,7 +58,11 @@ async function handleTenantMessage(message, conversationId) {
 
     const landlord = activeLease.unit.property.landlord;
     const config = await getOrCreateConfig(landlord.id);
-    if (!config.isEnabled || !config.autoMessages) return;
+    if (!config.isEnabled) return;
+
+    const commsPolicy = await policyEngine.getEffectivePolicy(landlord.id, activeLease.unit.property.id, 'COMMUNICATION');
+    if (commsPolicy.trustLevel === 'OBSERVE') return; // Observe: monitor only, never message or act
+    const autoAllowed = policyEngine.canActWithoutApproval(commsPolicy.trustLevel);
 
     const recentPayment = await prisma.payment.findFirst({
       where: { tenantId: tenant.id },
@@ -68,14 +72,16 @@ async function handleTenantMessage(message, conversationId) {
       ? `${recentPayment.status} (due ${new Date(recentPayment.dueDate).toDateString()})`
       : 'No recent payments';
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 512,
-      system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-      messages: [
+    let result;
+    try {
+      result = await callAndValidate(
         {
-          role: 'user',
-          content: `A tenant sent this message. Classify it and draft a response if appropriate.
+          system: SYSTEM_PROMPT,
+          maxTokens: 512,
+          messages: [
+            {
+              role: 'user',
+              content: `A tenant sent this message. Classify it and draft a response if appropriate.
 
 Tenant: ${tenant.firstName} ${tenant.lastName}
 Property: ${activeLease.unit.property.name}, Unit ${activeLease.unit.name}
@@ -101,11 +107,25 @@ Return JSON:
   "draftResponse": "AI-drafted response for landlord to approve (null if autoResponse is used)",
   "reason": "brief explanation"
 }`,
+            },
+          ],
         },
-      ],
-    });
-
-    const result = JSON.parse(response.content[0].text.trim());
+        messageClassificationSchema,
+      );
+    } catch (err) {
+      if (err instanceof AiValidationError) {
+        await escalationService.createEscalation({
+          landlordId: landlord.id,
+          actionType: 'MESSAGE_RESPONSE',
+          summary: `Tenant message needs manual review (AI could not classify it reliably): "${message.body.substring(0, 80)}${message.body.length > 80 ? '...' : ''}"`,
+          details: { messageBody: message.body, aiIssues: err.issues },
+          entityType: 'conversation',
+          entityId: conversationId,
+        });
+        return;
+      }
+      throw err;
+    }
     const tName = `${tenant.firstName} ${tenant.lastName}`;
     const uName = `${activeLease.unit.name}, ${activeLease.unit.property.name}`;
 
@@ -147,7 +167,7 @@ Return JSON:
       return;
     }
 
-    if (result.confidence === 'HIGH' && result.autoResponse) {
+    if (autoAllowed && result.confidence === 'HIGH' && result.autoResponse) {
       await prisma.message.create({
         data: { conversationId, senderId: landlord.userId, body: result.autoResponse },
       });
@@ -196,16 +216,22 @@ async function triageMaintenanceRequest(request) {
 
     const landlord = unit.property.landlord;
     const config = await getOrCreateConfig(landlord.id);
-    if (!config.isEnabled || !config.autoMaintenance) return;
+    if (!config.isEnabled) return;
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 512,
-      system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-      messages: [
+    const maintenancePolicy = await policyEngine.getEffectivePolicy(landlord.id, unit.property.id, 'MAINTENANCE');
+    if (maintenancePolicy.trustLevel === 'OBSERVE') return; // Observe: monitor only, never act
+    const autoAllowed = policyEngine.canActWithoutApproval(maintenancePolicy.trustLevel);
+
+    let result;
+    try {
+      result = await callAndValidate(
         {
-          role: 'user',
-          content: `Triage this maintenance request.
+          system: SYSTEM_PROMPT,
+          maxTokens: 512,
+          messages: [
+            {
+              role: 'user',
+              content: `Triage this maintenance request.
 
 Title: "${request.title}"
 Description: "${request.description}"
@@ -222,11 +248,25 @@ Return JSON:
   "summary": "one-line summary of what needs to be done",
   "reasoning": "why this urgency level"
 }`,
+            },
+          ],
         },
-      ],
-    });
-
-    const result = JSON.parse(response.content[0].text.trim());
+        maintenanceTriageSchema,
+      );
+    } catch (err) {
+      if (err instanceof AiValidationError) {
+        await escalationService.createEscalation({
+          landlordId: landlord.id,
+          actionType: 'MAINTENANCE_ESCALATION',
+          summary: `Maintenance request needs manual review (AI could not triage it reliably): "${request.title}"`,
+          details: { title: request.title, description: request.description, aiIssues: err.issues },
+          entityType: 'maintenance',
+          entityId: request.id,
+        });
+        return;
+      }
+      throw err;
+    }
 
     if (result.priority && result.confidence !== 'LOW') {
       await prisma.maintenanceRequest.update({
@@ -253,9 +293,10 @@ Return JSON:
       : 'Tenant';
 
     const estimatedMax = result.estimatedCostMax || 0;
-    const isHighCost = estimatedMax > 500;
+    const maxAutoSpend = maintenancePolicy.settings.maxAutoSpend ?? 500;
+    const isHighCost = estimatedMax > maxAutoSpend;
     const isEmergency = result.urgency === 'EMERGENCY';
-    const autoAct = (isEmergency || result.confidence === 'HIGH') && !isHighCost;
+    const autoAct = autoAllowed && (isEmergency || result.confidence === 'HIGH') && !isHighCost;
 
     // Cost escalation — always pause if estimated > $500
     if (isHighCost) {

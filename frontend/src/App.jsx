@@ -15,6 +15,7 @@ import PaymentsPage from './pages/PaymentsPage';
 import MessagesPage from './pages/MessagesPage';
 import NoticesPage from './pages/NoticesPage';
 import MaintenancePage from './pages/MaintenancePage';
+import MaintenanceDetailPage from './pages/MaintenanceDetailPage';
 import TenantPortalPage from './pages/TenantPortalPage';
 import PropertiesPage from './pages/PropertiesPage';
 import ProfilePage from './pages/ProfilePage';
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="/messages" element={<MessagesPage />} />
         <Route path="/notices" element={<NoticesPage />} />
         <Route path="/maintenance" element={<MaintenancePage />} />
+        <Route path="/maintenance/:id" element={<MaintenanceDetailPage />} />
         <Route path="/agent" element={<AgentPage />} />
         <Route path="/timeline" element={<AutopilotTimelinePage />} />
         <Route path="/import" element={<ImportPage />} />

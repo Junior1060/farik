@@ -1,9 +1,9 @@
-const Anthropic = require('@anthropic-ai/sdk');
 const XLSX = require('xlsx');
 const fs = require('fs');
 const path = require('path');
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const mammoth = require('mammoth');
+const WordExtractor = require('word-extractor');
+const aiClient = require('./ai/aiClient');
 
 // Internal row keys the import `confirm`/`validateRows` pipeline consumes.
 const TARGET_KEYS = [
@@ -39,7 +39,7 @@ Rules:
 const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 
 // Build the Claude content block(s) for whatever the landlord gave us.
-function buildContent({ file, text }) {
+async function buildContent({ file, text }) {
   if (text && text.trim()) {
     return [{ type: 'text', text: `Here is the landlord's data (pasted text):\n\n${text.trim()}` }];
   }
@@ -55,6 +55,16 @@ function buildContent({ file, text }) {
       return `--- Sheet: ${name} ---\n${csv}`;
     });
     return [{ type: 'text', text: `Here is the landlord's spreadsheet:\n\n${chunks.join('\n\n')}` }];
+  }
+
+  // Word documents → extract raw text (.docx via mammoth, legacy .doc via word-extractor).
+  if (ext === '.docx') {
+    const { value: docText } = await mammoth.extractRawText({ path: file.path });
+    return [{ type: 'text', text: `Here is the landlord's document:\n\n${docText}` }];
+  }
+  if (ext === '.doc') {
+    const doc = await new WordExtractor().extract(file.path);
+    return [{ type: 'text', text: `Here is the landlord's document:\n\n${doc.getBody()}` }];
   }
 
   const data = fs.readFileSync(file.path).toString('base64');
@@ -104,19 +114,18 @@ function parseResult(rawText) {
 }
 
 async function extractPortfolio({ file, text }) {
-  const content = buildContent({ file, text });
+  const content = await buildContent({ file, text });
 
-  const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 8000,
-    system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+  const rawText = await aiClient.createMessage({
+    system: SYSTEM_PROMPT,
+    maxTokens: 8000,
     messages: [
       { role: 'user', content },
       { role: 'assistant', content: '{' }, // prefill to force a clean JSON object
     ],
   });
 
-  return parseResult(response.content[0].text);
+  return parseResult(rawText);
 }
 
 module.exports = { extractPortfolio, TARGET_KEYS };

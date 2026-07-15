@@ -74,6 +74,98 @@ enum AgentLogStatus {
   CANCELLED
 }
 
+enum PolicyDomain {
+  MAINTENANCE
+  RENT
+  LEASE
+  COMMUNICATION
+}
+
+enum TrustLevel {
+  OBSERVE
+  DRAFT
+  EXECUTE_WITH_APPROVAL
+  OPERATE_WITHIN_POLICY
+  EMERGENCY_ESCALATION
+}
+
+enum ActorType {
+  AI
+  LANDLORD
+  TENANT
+  VENDOR
+  SYSTEM
+}
+
+enum WorkflowType {
+  MAINTENANCE
+  RENT
+  LEASE
+}
+
+enum MaintenanceWorkflowState {
+  INTAKE_RECEIVED
+  DIAGNOSTIC_QUESTIONS_SENT
+  DIAGNOSTIC_RESPONSE_RECEIVED
+  TRIAGED
+  EMERGENCY_ESCALATED
+  AWAITING_LANDLORD_APPROVAL
+  APPROVED
+  VENDOR_SELECTION
+  VENDOR_CONTACT_ATTEMPTED
+  VENDOR_CONTACT_FAILED
+  VENDOR_CONFIRMED
+  VENDOR_DECLINED
+  APPOINTMENT_PROPOSED
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_RESCHEDULED
+  WORK_IN_PROGRESS
+  WORK_COMPLETED_PENDING_INVOICE
+  INVOICE_RECEIVED
+  INVOICE_EXTRACTED
+  INVOICE_APPROVED
+  INVOICE_DISPUTED
+  RESOLVED
+  CANCELLED
+  ESCALATED_MANUAL
+}
+
+enum SmsDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SmsStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+enum VendorContactStatus {
+  SENT
+  DELIVERED
+  NO_RESPONSE
+  ACCEPTED
+  DECLINED
+}
+
+enum AppointmentStatus {
+  PROPOSED
+  CONFIRMED
+  RESCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum InvoiceApprovalStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  NEEDS_INFO
+}
+
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
@@ -114,6 +206,8 @@ model LandlordProfile {
   agentConfig  AgentConfig?
   agentLogs    AgentLog[]
   vendors      Vendor[]
+  policyDefaults  AgentPolicyDefault[]
+  policyOverrides AgentPolicyOverride[]
 
   @@map("landlord_profiles")
 }
@@ -125,6 +219,9 @@ model TenantProfile {
   lastName  String
   phone     String?
   avatarUrl String?
+  smsConsent   Boolean   @default(false)
+  smsConsentAt DateTime?
+  smsOptOutAt  DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -134,6 +231,7 @@ model TenantProfile {
   maintenanceRequests  MaintenanceRequest[]
   notices              Notice[]
   conversationTenants  ConversationParticipant[]
+  smsMessages          SmsMessage[]
 
   @@map("tenant_profiles")
 }
@@ -152,6 +250,7 @@ model Property {
 
   landlord LandlordProfile @relation(fields: [landlordId], references: [id], onDelete: Cascade)
   units    Unit[]
+  policyOverrides AgentPolicyOverride[]
 
   @@map("properties")
 }
@@ -310,8 +409,122 @@ model MaintenanceRequest {
 
   tenant TenantProfile @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   unit   Unit          @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  workflow     MaintenanceWorkflow?
+  appointments Appointment[]
+  invoices     MaintenanceInvoice[]
 
   @@map("maintenance_requests")
+}
+
+// One-to-one with MaintenanceRequest — tracks the deterministic/AI-driven workflow state.
+model MaintenanceWorkflow {
+  id                   String                    @id @default(cuid())
+  maintenanceRequestId String                    @unique
+  state                MaintenanceWorkflowState  @default(INTAKE_RECEIVED)
+  category             String?
+  urgency              String?
+  diagnosticAnswers    Json?
+  isEmergency          Boolean                   @default(false)
+  policySnapshot       Json?
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+
+  maintenanceRequest MaintenanceRequest @relation(fields: [maintenanceRequestId], references: [id], onDelete: Cascade)
+
+  @@map("maintenance_workflows")
+}
+
+// Generalized transition log — reused by rent/lease workflows in a later phase.
+model WorkflowEvent {
+  id           String       @id @default(cuid())
+  landlordId   String
+  workflowType WorkflowType
+  workflowId   String
+  fromState    String?
+  toState      String
+  actorType    ActorType
+  actorId      String?
+  reason       String?
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+
+  @@index([workflowType, workflowId])
+  @@map("workflow_events")
+}
+
+model VendorContactAttempt {
+  id                     String              @id @default(cuid())
+  vendorId               String
+  maintenanceWorkflowId  String
+  method                 String              @default("SMS")
+  status                 VendorContactStatus @default(SENT)
+  attemptNumber          Int
+  sentAt                 DateTime            @default(now())
+  respondedAt            DateTime?
+  createdAt              DateTime            @default(now())
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([maintenanceWorkflowId])
+  @@map("vendor_contact_attempts")
+}
+
+model Appointment {
+  id                    String            @id @default(cuid())
+  maintenanceRequestId  String
+  vendorId              String
+  proposedTimes         Json?
+  scheduledStart        DateTime?
+  scheduledEnd          DateTime?
+  status                AppointmentStatus @default(PROPOSED)
+  notes                 String?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  maintenanceRequest MaintenanceRequest @relation(fields: [maintenanceRequestId], references: [id], onDelete: Cascade)
+  vendor             Vendor             @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@map("appointments")
+}
+
+model MaintenanceInvoice {
+  id                    String                 @id @default(cuid())
+  maintenanceRequestId  String
+  vendorId              String?
+  originalName          String
+  storedName            String
+  mimeType              String
+  sizeBytes             Int
+  extracted             Json?
+  extractedAmount       Float?
+  approvalStatus        InvoiceApprovalStatus  @default(PENDING_REVIEW)
+  approvedByUserId      String?
+  approvedAt            DateTime?
+  createdAt             DateTime               @default(now())
+
+  maintenanceRequest MaintenanceRequest @relation(fields: [maintenanceRequestId], references: [id], onDelete: Cascade)
+  vendor             Vendor?             @relation(fields: [vendorId], references: [id])
+
+  @@map("maintenance_invoices")
+}
+
+model SmsMessage {
+  id                  String       @id @default(cuid())
+  tenantId            String?
+  phoneNumber         String
+  direction           SmsDirection
+  body                String
+  provider            String
+  providerMessageId   String?
+  status              SmsStatus    @default(QUEUED)
+  relatedWorkflowType WorkflowType?
+  relatedWorkflowId   String?
+  createdAt           DateTime     @default(now())
+
+  tenant TenantProfile? @relation(fields: [tenantId], references: [id])
+
+  @@index([phoneNumber])
+  @@map("sms_messages")
 }
 
 model AgentConfig {
@@ -344,12 +557,49 @@ model AgentLog {
   draftContent   String?
   reminderSentAt DateTime?
   urgentAt       DateTime?
+  policyDomain      PolicyDomain?
+  trustLevelApplied TrustLevel?
+  expiresAt         DateTime?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
   landlord LandlordProfile @relation(fields: [landlordId], references: [id], onDelete: Cascade)
 
   @@map("agent_logs")
+}
+
+// Org/account-level default trust level + settings for one policy domain.
+model AgentPolicyDefault {
+  id         String       @id @default(cuid())
+  landlordId String
+  domain     PolicyDomain
+  trustLevel TrustLevel   @default(OBSERVE)
+  settings   Json         @default("{}")
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  landlord LandlordProfile @relation(fields: [landlordId], references: [id], onDelete: Cascade)
+
+  @@unique([landlordId, domain])
+  @@map("agent_policy_defaults")
+}
+
+// Property-level override — wins over the org-level default for the same domain.
+model AgentPolicyOverride {
+  id         String       @id @default(cuid())
+  landlordId String
+  propertyId String
+  domain     PolicyDomain
+  trustLevel TrustLevel   @default(OBSERVE)
+  settings   Json         @default("{}")
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  landlord LandlordProfile @relation(fields: [landlordId], references: [id], onDelete: Cascade)
+  property Property        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([landlordId, propertyId, domain])
+  @@map("agent_policy_overrides")
 }
 
 model Vendor {
@@ -361,10 +611,17 @@ model Vendor {
   specialty  String
   notes      String?
   isActive   Boolean  @default(true)
+  contactPreference  String  @default("SMS")
+  avgResponseMinutes Int?
+  rating             Float?
+  isPreferred        Boolean @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   landlord LandlordProfile @relation(fields: [landlordId], references: [id], onDelete: Cascade)
+  contactAttempts VendorContactAttempt[]
+  appointments    Appointment[]
+  invoices        MaintenanceInvoice[]
 
   @@map("vendors")
 }

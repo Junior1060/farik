@@ -11,6 +11,16 @@ import {
   getAgentConfig, updateAgentConfig, getAgentLogs, approveLog, rejectLog,
   getVendors, createVendor, updateVendor, deleteVendor, triggerAgentRun,
 } from '../services/agentService';
+import { getOrgPolicies, updateOrgPolicy } from '../services/policyApi';
+import TrustLevelSelector from '../components/agent/TrustLevelSelector';
+import PolicyOverrideTable from '../components/agent/PolicyOverrideTable';
+
+const POLICY_DOMAINS = [
+  { id: 'MAINTENANCE', label: 'Maintenance' },
+  { id: 'RENT', label: 'Rent' },
+  { id: 'LEASE', label: 'Lease' },
+  { id: 'COMMUNICATION', label: 'Communication' },
+];
 
 const ACTION_LABELS = {
   RENT_REMINDER: 'Rent Reminder',
@@ -145,6 +155,10 @@ export default function AgentPage() {
   const [vendorForm, setVendorForm] = useState(emptyVendor);
   const [vendorSaving, setVendorSaving] = useState(false);
   const [logFilter, setLogFilter] = useState('');
+  const [policies, setPolicies] = useState({});
+  const [policyDomain, setPolicyDomain] = useState('MAINTENANCE');
+  const [policiesLoading, setPoliciesLoading] = useState(false);
+  const [policySaving, setPolicySaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -166,6 +180,29 @@ export default function AgentPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadPolicies = useCallback(async () => {
+    setPoliciesLoading(true);
+    try {
+      setPolicies(await getOrgPolicies());
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setPoliciesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { if (tab === 'policies') loadPolicies(); }, [tab, loadPolicies]);
+
+  const handleTrustLevelChange = async (domain, trustLevel) => {
+    setPolicySaving(true);
+    try {
+      const updated = await updateOrgPolicy(domain, { trustLevel });
+      setPolicies((prev) => ({ ...prev, [domain]: { ...prev[domain], trustLevel: updated.trustLevel, source: 'org_default' } }));
+    } finally {
+      setPolicySaving(false);
+    }
+  };
 
   const handleConfigToggle = async (key, value) => {
     const optimistic = { ...config, [key]: value };
@@ -244,6 +281,7 @@ export default function AgentPage() {
     { id: 'approvals', label: `Approvals${escalated.length ? ` (${escalated.length})` : ''}` },
     { id: 'logs', label: 'Activity Log' },
     { id: 'vendors', label: 'Vendors' },
+    { id: 'policies', label: 'Policies' },
   ];
 
   return (
@@ -499,6 +537,50 @@ export default function AgentPage() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Policies Tab */}
+      {tab === 'policies' && (
+        <div className="mt-6">
+          <div className="flex gap-1 mb-4 bg-slate-100 rounded-xl p-1 w-fit">
+            {POLICY_DOMAINS.map((d) => (
+              <button
+                key={d.id}
+                onClick={() => setPolicyDomain(d.id)}
+                className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  policyDomain === d.id ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+
+          {policiesLoading ? (
+            <p className="text-sm text-slate-400">Loading policies…</p>
+          ) : (
+            <div className="grid md:grid-cols-2 gap-6">
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+                <h3 className="text-sm font-semibold text-slate-700 mb-1">Account-wide trust level</h3>
+                <p className="text-xs text-slate-400 mb-4">
+                  Applies to every property unless overridden below.
+                </p>
+                <TrustLevelSelector
+                  value={policies[policyDomain]?.trustLevel}
+                  disabled={policySaving}
+                  onChange={(level) => handleTrustLevelChange(policyDomain, level)}
+                />
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6">
+                <h3 className="text-sm font-semibold text-slate-700 mb-1">Per-property overrides</h3>
+                <p className="text-xs text-slate-400 mb-4">
+                  A property override always wins over the account-wide default.
+                </p>
+                <PolicyOverrideTable domain={policyDomain} />
+              </div>
             </div>
           )}
         </div>

@@ -288,9 +288,9 @@ function UploadStep({ onParsed }) {
       ) : (
         <>
           <DropZone
-            accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp"
-            label="Drag your file here — spreadsheet, PDF, or image"
-            hint="or click to browse · .xlsx, .csv, .pdf, .png, .jpg up to 20 MB"
+            accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp,.docx,.doc"
+            label="Drag your file here — spreadsheet, Word doc, PDF, or image"
+            hint="or click to browse · .xlsx, .csv, .docx, .pdf, .png, .jpg up to 20 MB"
             onFiles={handleFiles}
           />
           <button onClick={() => setShowPaste(true)} className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1.5">

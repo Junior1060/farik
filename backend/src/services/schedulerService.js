@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const agentService = require('./agentService');
 const escalationService = require('./escalationService');
+const vendorDispatchService = require('./vendorDispatchService');
 
 function startScheduler() {
   // Rent reminders: daily at 8:00 AM
@@ -18,7 +19,12 @@ function startScheduler() {
     escalationService.checkEscalationReminders().catch(console.error);
   });
 
-  console.log('[Scheduler] Agent scheduler started — reminders 8AM, renewals 9AM, escalation check hourly');
+  // Vendor contact timeouts: every 30 minutes (retries or escalates unanswered dispatches)
+  cron.schedule('*/30 * * * *', () => {
+    vendorDispatchService.checkVendorTimeouts().catch(console.error);
+  });
+
+  console.log('[Scheduler] Agent scheduler started — reminders 8AM, renewals 9AM, escalation check hourly, vendor timeouts every 30min');
 }
 
 module.exports = { startScheduler };

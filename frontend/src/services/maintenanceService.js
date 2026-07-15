@@ -15,3 +15,6 @@ export const createMaintenanceRequest = (data, photos = []) => {
     .then((r) => r.data);
 };
 export const updateMaintenanceRequest = (id, data) => api.put(`/maintenance/${id}`, data).then((r) => r.data);
+export const getMaintenanceRequestDetail = (id) => api.get(`/maintenance/${id}`).then((r) => r.data);
+export const approveMaintenanceWorkflow = (id) => api.post(`/maintenance/${id}/approve-workflow`).then((r) => r.data.workflow);
+export const cancelMaintenanceWorkflow = (id, reason) => api.post(`/maintenance/${id}/cancel-workflow`, { reason }).then((r) => r.data.workflow);

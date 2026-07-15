@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Wrench, ChevronDown } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Wrench, ChevronDown, ChevronRight } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import SearchFilterBar from '../components/ui/SearchFilterBar';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -101,7 +102,9 @@ const MaintenancePage = () => {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-semibold text-slate-800">{req.title}</h3>
+                        <Link to={`/maintenance/${req.id}`} className="font-semibold text-slate-800 hover:text-brand-600 hover:underline flex items-center gap-1">
+                          {req.title} <ChevronRight size={14} className="text-slate-400" />
+                        </Link>
                         <PriorityBadge priority={req.priority} />
                         <StatusBadge status={req.status} />
                       </div>

@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { getAll, create, update } = require('../controllers/maintenanceController');
+const { getAll, getOne, create, update, approveWorkflow, cancelWorkflow } = require('../controllers/maintenanceController');
 const { authenticate, requireLandlord, requireTenant } = require('../middleware/auth');
 
 // ── Maintenance photo upload ──────────────────────────────────────────────────
@@ -29,7 +29,10 @@ const photoUpload = multer({
 });
 
 router.get('/', authenticate, getAll);
+router.get('/:id', authenticate, getOne);
 router.post('/', authenticate, requireTenant, photoUpload.array('photos', 8), create);
 router.put('/:id', authenticate, requireLandlord, update);
+router.post('/:id/approve-workflow', authenticate, requireLandlord, approveWorkflow);
+router.post('/:id/cancel-workflow', authenticate, requireLandlord, cancelWorkflow);
 
 module.exports = router;

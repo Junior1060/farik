@@ -29,9 +29,9 @@ const onboardingUpload = multer({
   storage: onboardingStorage,
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = ['.xlsx', '.xls', '.csv', '.pdf', '.png', '.jpg', '.jpeg', '.webp'];
+    const allowed = ['.xlsx', '.xls', '.csv', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.docx', '.doc'];
     if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
-    else cb(new Error('Please upload a spreadsheet, PDF, or image (or paste your data as text).'));
+    else cb(Object.assign(new Error('Please upload a spreadsheet, Word document, PDF, or image (or paste your data as text).'), { status: 400 }));
   },
 });
 
@@ -50,7 +50,7 @@ const spreadsheetUpload = multer({
   fileFilter: (req, file, cb) => {
     const allowed = ['.xlsx', '.xls', '.csv'];
     if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
-    else cb(new Error('Only .xlsx, .xls, and .csv files are allowed'));
+    else cb(Object.assign(new Error('Only .xlsx, .xls, and .csv files are allowed'), { status: 400 }));
   },
 });
 
@@ -69,7 +69,7 @@ const documentUpload = multer({
   fileFilter: (req, file, cb) => {
     const allowed = ['.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png', '.webp'];
     if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
-    else cb(new Error('Only PDF, DOCX, and image files are allowed'));
+    else cb(Object.assign(new Error('Only PDF, DOCX, and image files are allowed'), { status: 400 }));
   },
 });
 
