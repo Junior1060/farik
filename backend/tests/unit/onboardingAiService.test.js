@@ -21,7 +21,7 @@ function mockAiRowsResponse() {
     rows: [{ propertyName: 'Maple Court', tenantFirstName: 'Alice', tenantLastName: 'Morgan' }],
     summary: 'Found 1 tenant',
     warnings: [],
-  }).slice(1)); // extractPortfolio prefixes the '{' itself via the assistant prefill
+  }));
 }
 
 describe('extractPortfolio — Word document support', () => {
@@ -54,5 +54,36 @@ describe('extractPortfolio — Word document support', () => {
     await expect(onboardingAiService.extractPortfolio({
       file: { originalname: 'tenants.txt', path: '/fake/tenants.txt' },
     })).rejects.toThrow(/Unsupported file type/);
+  });
+});
+
+describe('extractPortfolio — JSON parsing without assistant prefill', () => {
+  // claude-sonnet-4-6 rejects assistant-message prefill outright, so the service
+  // must parse a complete, un-prefilled JSON response from the model.
+  it('parses a clean JSON response with no leading "{" added by us', async () => {
+    mammoth.extractRawText.mockResolvedValue({ value: 'some text' });
+    aiClient.setMockHandler(() => JSON.stringify({ rows: [{ propertyName: 'Oak St' }], summary: '', warnings: [] }));
+
+    const result = await onboardingAiService.extractPortfolio({ file: { originalname: 'x.docx', path: '/fake/x.docx' } });
+
+    expect(result.rows[0].propertyName).toBe('Oak St');
+  });
+
+  it('strips markdown fences if the model adds them despite instructions', async () => {
+    mammoth.extractRawText.mockResolvedValue({ value: 'some text' });
+    aiClient.setMockHandler(() => '```json\n' + JSON.stringify({ rows: [{ propertyName: 'Fenced' }], summary: '', warnings: [] }) + '\n```');
+
+    const result = await onboardingAiService.extractPortfolio({ file: { originalname: 'x.docx', path: '/fake/x.docx' } });
+
+    expect(result.rows[0].propertyName).toBe('Fenced');
+  });
+
+  it('recovers a JSON object even if the model adds a short preamble', async () => {
+    mammoth.extractRawText.mockResolvedValue({ value: 'some text' });
+    aiClient.setMockHandler(() => 'Sure, here is the data:\n' + JSON.stringify({ rows: [{ propertyName: 'Preamble' }], summary: '', warnings: [] }));
+
+    const result = await onboardingAiService.extractPortfolio({ file: { originalname: 'x.docx', path: '/fake/x.docx' } });
+
+    expect(result.rows[0].propertyName).toBe('Preamble');
   });
 });

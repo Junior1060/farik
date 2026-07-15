@@ -89,10 +89,18 @@ async function buildContent({ file, text }) {
 }
 
 function parseResult(rawText) {
-  // Response is prefilled with "{", so prepend it and strip any stray fences.
-  let jsonText = ('{' + rawText).trim();
+  let jsonText = rawText.trim();
   const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) jsonText = fence[1].trim();
+
+  // Defensive: some models occasionally add a short preamble despite instructions
+  // not to. If the text doesn't already start with '{', extract the first
+  // top-level JSON object rather than failing outright.
+  if (!jsonText.startsWith('{')) {
+    const start = jsonText.indexOf('{');
+    const end = jsonText.lastIndexOf('}');
+    if (start !== -1 && end !== -1) jsonText = jsonText.slice(start, end + 1);
+  }
 
   const parsed = JSON.parse(jsonText);
   const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
@@ -119,10 +127,7 @@ async function extractPortfolio({ file, text }) {
   const rawText = await aiClient.createMessage({
     system: SYSTEM_PROMPT,
     maxTokens: 8000,
-    messages: [
-      { role: 'user', content },
-      { role: 'assistant', content: '{' }, // prefill to force a clean JSON object
-    ],
+    messages: [{ role: 'user', content }],
   });
 
   return parseResult(rawText);
