@@ -103,6 +103,16 @@ const sendMessage = async (req, res, next) => {
       const { tenantId, subject } = req.body;
       if (!tenantId) return res.status(400).json({ error: 'tenantId required for new conversation' });
 
+      if (req.user.role === 'LANDLORD') {
+        const landlordId = req.user.landlordProfile.id;
+        const owned = await prisma.tenantProfile.count({
+          where: { id: tenantId, leases: { some: { unit: { property: { landlordId } } } } },
+        });
+        if (!owned) return res.status(403).json({ error: 'Access denied' });
+      } else if (req.user.tenantProfile.id !== tenantId) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
       const conv = await prisma.conversation.create({
         data: {
           subject: subject || null,

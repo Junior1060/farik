@@ -44,8 +44,22 @@ const getAll = async (req, res, next) => {
   }
 };
 
+// Every tenant-scoped mutation/read below must confirm the tenant has at least one
+// lease on a unit under this landlord's own properties before proceeding — the same
+// scoping shape already used by getAll — otherwise any landlord could read/edit/delete
+// any other landlord's tenants by guessing an id.
+async function assertLandlordOwnsTenant(landlordId, tenantId) {
+  return prisma.tenantProfile.findFirst({
+    where: { id: tenantId, leases: { some: { unit: { property: { landlordId } } } } },
+  });
+}
+
 const getOne = async (req, res, next) => {
   try {
+    const landlordId = req.user.landlordProfile.id;
+    const owns = await assertLandlordOwnsTenant(landlordId, req.params.id);
+    if (!owns) return res.status(404).json({ error: 'Tenant not found' });
+
     const tenant = await prisma.tenantProfile.findUnique({
       where: { id: req.params.id },
       include: {
@@ -66,6 +80,10 @@ const getOne = async (req, res, next) => {
 
 const update = async (req, res, next) => {
   try {
+    const landlordId = req.user.landlordProfile.id;
+    const owns = await assertLandlordOwnsTenant(landlordId, req.params.id);
+    if (!owns) return res.status(404).json({ error: 'Tenant not found' });
+
     const data = tenantSchema.partial().parse(req.body);
     const tenant = await prisma.tenantProfile.update({
       where: { id: req.params.id },
@@ -83,6 +101,10 @@ const update = async (req, res, next) => {
 
 const remove = async (req, res, next) => {
   try {
+    const landlordId = req.user.landlordProfile.id;
+    const owns = await assertLandlordOwnsTenant(landlordId, req.params.id);
+    if (!owns) return res.status(404).json({ error: 'Tenant not found' });
+
     await prisma.tenantProfile.delete({ where: { id: req.params.id } });
     res.json({ message: 'Tenant deleted' });
   } catch (err) {
@@ -104,7 +126,12 @@ const lookupByEmail = async (req, res, next) => {
       return res.status(404).json({ error: 'No tenant account found with this email. Ask them to sign up at /register first.' });
     }
 
-    res.json({ tenant: user.tenantProfile, email: user.email });
+    // This lookup intentionally spans all landlords (used by onboarding/import to find
+    // an existing user by email before attaching a new lease), but the caller has no
+    // established relationship with this tenant yet — never return phone/contact info
+    // here, only enough to confirm the account exists and link it.
+    const { phone, ...tenantProfileSafe } = user.tenantProfile;
+    res.json({ tenant: tenantProfileSafe, email: user.email });
   } catch (err) {
     next(err);
   }

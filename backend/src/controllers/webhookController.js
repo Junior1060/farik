@@ -41,8 +41,19 @@ async function handleVendorReply(vendor, body) {
  * No `authenticate` middleware (external caller); signature verification is the
  * only gate, checked before any database write.
  */
+const STOP_KEYWORDS = new Set(['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT']);
+const START_KEYWORDS = new Set(['START', 'UNSTOP', 'YES']);
+
 async function handleInboundSms(req, res, next) {
   try {
+    // Defense against silent fail-open: the mock SMS provider always reports a valid
+    // signature (there's no real external caller to authenticate in dev/test), so if
+    // SMS_PROVIDER is ever unset/misspelled in production, every request would otherwise
+    // sail through unauthenticated. Refuse outright rather than falling back to mock.
+    if (process.env.NODE_ENV === 'production' && process.env.SMS_PROVIDER !== 'twilio') {
+      return res.status(403).json({ error: 'SMS provider not configured for production' });
+    }
+
     const provider = getSmsProvider();
     if (!provider.verifyWebhookSignature(req)) {
       return res.status(403).json({ error: 'Invalid webhook signature' });
@@ -77,6 +88,18 @@ async function handleInboundSms(req, res, next) {
         to: from,
         body: 'We could not match this number to an account. Please contact your property manager to update your phone number on file.',
       });
+      return res.status(200).json({ received: true });
+    }
+
+    const keyword = body.trim().toUpperCase();
+    if (STOP_KEYWORDS.has(keyword)) {
+      await prisma.tenantProfile.update({ where: { id: tenant.id }, data: { smsOptOutAt: new Date() } });
+      await provider.sendSms({ to: from, body: 'You have been unsubscribed and will no longer receive texts from Farik. Reply START to resume.', tenantId: tenant.id });
+      return res.status(200).json({ received: true });
+    }
+    if (START_KEYWORDS.has(keyword) && tenant.smsOptOutAt) {
+      await prisma.tenantProfile.update({ where: { id: tenant.id }, data: { smsOptOutAt: null } });
+      await provider.sendSms({ to: from, body: 'You are resubscribed to Farik texts.', tenantId: tenant.id });
       return res.status(200).json({ received: true });
     }
 

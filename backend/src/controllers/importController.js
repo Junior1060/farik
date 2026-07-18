@@ -222,17 +222,13 @@ const uploadDocuments = async (req, res, next) => {
     const documents = [];
 
     for (const f of req.files) {
-      // Placeholder extraction — structured for future AI/OCR integration
-      const extracted = {
-        tenantName: null,
-        unitNumber: null,
-        startDate: null,
-        endDate: null,
-        monthlyRent: null,
-        deposit: null,
-        notes: null,
-        raw: null,
-      };
+      let extracted;
+      try {
+        extracted = await onboardingAiService.extractLeaseDocument(f);
+      } catch (extractErr) {
+        console.error(`Lease document extraction failed for ${f.originalname}:`, extractErr);
+        extracted = { error: 'Could not read this document automatically.' };
+      }
 
       const doc = await prisma.uploadedDocument.create({
         data: {
@@ -366,6 +362,14 @@ const confirm = async (req, res, next) => {
             },
           });
           results.leases++;
+
+          // Link an uploaded lease document to this lease, if the frontend matched one
+          if (row._documentId) {
+            await prisma.uploadedDocument.updateMany({
+              where: { id: row._documentId, landlordId },
+              data: { leaseId: lease.id },
+            });
+          }
 
           // Mark unit occupied for active leases
           if (leaseStatus === 'ACTIVE') {

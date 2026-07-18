@@ -1,6 +1,7 @@
 const mockPrisma = {
   maintenanceRequest: { findUnique: jest.fn(), update: jest.fn() },
-  maintenanceWorkflow: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  maintenanceWorkflow: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+  tenantProfile: { findUnique: jest.fn() },
   workflowEvent: { create: jest.fn() },
   smsMessage: { create: jest.fn() },
   landlordProfile: { findUnique: jest.fn() },
@@ -8,6 +9,7 @@ const mockPrisma = {
   notification: { create: jest.fn() },
   agentPolicyOverride: { findUnique: jest.fn() },
   agentPolicyDefault: { findUnique: jest.fn() },
+  $transaction: jest.fn((fn) => fn(mockPrisma)),
 };
 jest.mock('../../src/lib/prisma', () => mockPrisma);
 
@@ -38,6 +40,12 @@ function wireStatefulWorkflow(initial) {
     row = { ...row, ...data };
     return Promise.resolve({ ...row });
   });
+  // workflowEngine.maintenancePersist uses updateMany (id + fromState guard) to change `state`.
+  mockPrisma.maintenanceWorkflow.updateMany.mockImplementation(({ where, data }) => {
+    if (where.state !== undefined && row.state !== where.state) return Promise.resolve({ count: 0 });
+    row = { ...row, ...data };
+    return Promise.resolve({ count: 1 });
+  });
   return () => row;
 }
 
@@ -49,6 +57,9 @@ beforeEach(() => {
   mockPrisma.smsMessage.create.mockResolvedValue({ id: 'sms-1' });
   mockPrisma.agentPolicyOverride.findUnique.mockResolvedValue(null);
   mockPrisma.agentPolicyDefault.findUnique.mockResolvedValue({ trustLevel: 'OPERATE_WITHIN_POLICY', settings: {} });
+  // Safe default for tests that don't need full stateful tracking (see wireStatefulWorkflow for those that do).
+  mockPrisma.maintenanceWorkflow.updateMany.mockResolvedValue({ count: 1 });
+  mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: null }); // not opted out, by default
 });
 
 afterEach(() => {
@@ -98,7 +109,7 @@ describe('startWorkflow', () => {
 
 describe('recordTenantReply -> triageAndProceed', () => {
   it('auto-approves a routine, low-cost, HIGH-confidence triage under OPERATE_WITHIN_POLICY', async () => {
-    wireStatefulWorkflow(mockWorkflowRow({ state: 'DIAGNOSTIC_QUESTIONS_SENT' }));
+    const getRow = wireStatefulWorkflow(mockWorkflowRow({ state: 'DIAGNOSTIC_QUESTIONS_SENT', category: 'PLUMBING_LEAK' }));
     aiClient.setMockHandler(() => JSON.stringify({
       urgency: 'ROUTINE', confidence: 'HIGH', category: 'plumbing', priority: 'MEDIUM',
       estimatedCostMin: 80, estimatedCostMax: 150, summary: 'Fix leak', reasoning: 'minor leak',
@@ -109,6 +120,9 @@ describe('recordTenantReply -> triageAndProceed', () => {
     const approvedTransition = mockPrisma.workflowEvent.create.mock.calls.find((c) => c[0].data.toState === 'APPROVED');
     expect(approvedTransition).toBeTruthy();
     expect(mockPrisma.agentLog.create).not.toHaveBeenCalled(); // no escalation needed
+    // The AI's normalized lowercase category must overwrite the deterministic intake
+    // category so vendorDispatchService can later match it against Vendor.specialty.
+    expect(getRow().category).toBe('plumbing');
   });
 
   it('routes to landlord approval when the estimated cost exceeds the policy spend limit', async () => {

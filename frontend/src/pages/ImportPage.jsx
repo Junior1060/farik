@@ -466,7 +466,24 @@ function PreviewStep({ rows, onRowsChange, onBack, onNext }) {
 
 // ─── STEP 3: Documents ────────────────────────────────────────────────────────
 
-function DocumentStep({ docs, onDocsChange, onBack, onNext }) {
+// Best-guess row match for a document's extracted tenant/unit info.
+function guessRowId(extracted, rows) {
+  if (!extracted || extracted.error) return '';
+  const unit = (extracted.unitNumber || '').trim().toLowerCase();
+  const name = (extracted.tenantName || '').trim().toLowerCase();
+  if (!unit && !name) return '';
+
+  const match = rows.find((r) => {
+    const rowUnit = (r.unitNumber || '').trim().toLowerCase();
+    const rowName = `${r.tenantFirstName || ''} ${r.tenantLastName || ''}`.trim().toLowerCase();
+    if (unit && rowUnit && unit === rowUnit) return true;
+    if (name && rowName && (rowName === name || rowName.includes(name) || name.includes(rowName))) return true;
+    return false;
+  });
+  return match?._id || '';
+}
+
+function DocumentStep({ docs, onDocsChange, rows, onBack, onNext }) {
   const [uploading, setUploading] = useState(false);
 
   const handleFiles = async (files) => {
@@ -475,7 +492,8 @@ function DocumentStep({ docs, onDocsChange, onBack, onNext }) {
       const fd = new FormData();
       files.forEach((f) => fd.append('files', f));
       const data = await uploadDocuments(fd);
-      onDocsChange((prev) => [...prev, ...data.documents]);
+      const withMatches = data.documents.map((d) => ({ ...d, _rowId: guessRowId(d.extracted, rows) }));
+      onDocsChange((prev) => [...prev, ...withMatches]);
     } catch {
       /* silent — documents are optional */
     } finally {
@@ -485,14 +503,20 @@ function DocumentStep({ docs, onDocsChange, onBack, onNext }) {
 
   const removeDoc = (id) => onDocsChange((prev) => prev.filter((d) => d.id !== id));
 
+  const setRowLink = (id, rowId) =>
+    onDocsChange((prev) => prev.map((d) => (d.id === id ? { ...d, _rowId: rowId } : d)));
+
   const formatBytes = (b) => b > 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${(b / 1024).toFixed(0)} KB`;
+
+  const rowLabel = (r) => `${r.unitNumber || 'Unit'} — ${r.tenantFirstName || ''} ${r.tenantLastName || ''}`.trim();
 
   return (
     <div className="space-y-5">
       <div className="flex items-start gap-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl">
         <Info size={15} className="text-slate-400 flex-shrink-0 mt-0.5" />
         <p className="text-sm text-slate-600">
-          Upload signed lease agreements, ID documents, or any relevant files.
+          Upload signed lease agreements, ID documents, or any relevant files. Farik will try to read
+          the tenant, unit, and dates and attach the document to the matching unit.
           This step is <strong>optional</strong> — you can always add documents later.
         </p>
       </div>
@@ -508,17 +532,48 @@ function DocumentStep({ docs, onDocsChange, onBack, onNext }) {
       {docs.length > 0 && (
         <div className="space-y-2">
           {docs.map((doc) => (
-            <div key={doc.id} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl">
-              <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                <FileText size={15} className="text-slate-500" />
+            <div key={doc.id} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <FileText size={15} className="text-slate-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800 truncate">{doc.originalName}</p>
+                  <p className="text-xs text-slate-400">{formatBytes(doc.size)}</p>
+                </div>
+                <button onClick={() => removeDoc(doc.id)} className="text-slate-300 hover:text-red-500 p-1 rounded-lg transition-colors">
+                  <X size={14} />
+                </button>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-800 truncate">{doc.originalName}</p>
-                <p className="text-xs text-slate-400">{formatBytes(doc.size)}</p>
-              </div>
-              <button onClick={() => removeDoc(doc.id)} className="text-slate-300 hover:text-red-500 p-1 rounded-lg transition-colors">
-                <X size={14} />
-              </button>
+
+              {doc.extracted?.error ? (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                  {doc.extracted.error}
+                </p>
+              ) : (
+                <div className="text-xs text-slate-500 pl-11 flex flex-wrap gap-x-3 gap-y-0.5">
+                  {doc.extracted?.tenantName && <span>{doc.extracted.tenantName}</span>}
+                  {doc.extracted?.unitNumber && <span>Unit {doc.extracted.unitNumber}</span>}
+                  {doc.extracted?.startDate && <span>{doc.extracted.startDate} → {doc.extracted.endDate || '?'}</span>}
+                  {doc.extracted?.monthlyRent && <span>${doc.extracted.monthlyRent}/mo</span>}
+                </div>
+              )}
+
+              {rows.length > 0 && (
+                <div className="pl-11 flex items-center gap-2">
+                  <span className="text-xs text-slate-400">Attach to:</span>
+                  <select
+                    value={doc._rowId || ''}
+                    onChange={(e) => setRowLink(doc.id, e.target.value)}
+                    className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700"
+                  >
+                    <option value="">None</option>
+                    {rows.map((r) => (
+                      <option key={r._id} value={r._id}>{rowLabel(r)}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -605,7 +660,8 @@ function ConfirmStep({ rows, docs, onBack, onConfirm, confirming }) {
       {docs.length > 0 && (
         <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
           <FileText size={14} className="text-slate-400" />
-          {docs.length} lease document{docs.length !== 1 ? 's' : ''} will be stored.
+          {docs.length} lease document{docs.length !== 1 ? 's' : ''} will be stored
+          {docs.some((d) => d._rowId) && ', attached to their matched unit'}.
         </div>
       )}
 
@@ -712,7 +768,11 @@ export default function ImportPage() {
     setConfirming(true);
     setConfirmError('');
     try {
-      const data = await confirmImport(rows);
+      const docByRowId = new Map(docs.filter((d) => d._rowId).map((d) => [d._rowId, d.id]));
+      const rowsWithDocs = rows.map((r) =>
+        docByRowId.has(r._id) ? { ...r, _documentId: docByRowId.get(r._id) } : r,
+      );
+      const data = await confirmImport(rowsWithDocs);
       setResult(data.results);
       setStep(5);
     } catch (err) {
@@ -782,6 +842,7 @@ export default function ImportPage() {
           <DocumentStep
             docs={docs}
             onDocsChange={setDocs}
+            rows={rows}
             onBack={() => setStep(2)}
             onNext={() => setStep(4)}
           />

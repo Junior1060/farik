@@ -1,20 +1,16 @@
 import api from './api';
 
-export const downloadTemplate = () => {
-  const token = localStorage.getItem('rentora_token');
-  const a = document.createElement('a');
-  a.href = `/api/import/template`;
-  // Use fetch with auth header to trigger download
-  fetch('/api/import/template', { headers: { Authorization: `Bearer ${token}` } })
-    .then((r) => r.blob())
-    .then((blob) => {
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'farik-import-template.xlsx';
-      link.click();
-      URL.revokeObjectURL(url);
-    });
+export const downloadTemplate = async () => {
+  // Route through the shared api client (respects VITE_API_URL) instead of a raw
+  // relative fetch — on Vercel/Render split deployments a relative path hits the
+  // frontend's own SPA catch-all instead of the backend.
+  const res = await api.get('/import/template', { responseType: 'blob' });
+  const url = URL.createObjectURL(res.data);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'farik-import-template.xlsx';
+  link.click();
+  URL.revokeObjectURL(url);
 };
 
 export const uploadSpreadsheet = async (formData) => {

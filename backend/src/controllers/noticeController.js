@@ -35,6 +35,18 @@ const create = async (req, res, next) => {
     const landlordId = req.user.landlordProfile.id;
     const data = noticeSchema.parse(req.body);
 
+    const tenantOwned = await prisma.tenantProfile.findFirst({
+      where: { id: data.tenantId, leases: { some: { unit: { property: { landlordId } } } } },
+    });
+    if (!tenantOwned) return res.status(404).json({ error: 'Tenant not found' });
+
+    if (data.leaseId) {
+      const leaseOwned = await prisma.lease.findFirst({
+        where: { id: data.leaseId, unit: { property: { landlordId } } },
+      });
+      if (!leaseOwned) return res.status(404).json({ error: 'Lease not found' });
+    }
+
     const notice = await prisma.notice.create({
       data: {
         landlordId,

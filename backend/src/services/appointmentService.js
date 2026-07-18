@@ -4,10 +4,6 @@ const escalationService = require('./escalationService');
 const { getSmsProvider } = require('./sms/smsProvider');
 const { TRANSITIONS } = require('./workflows/maintenanceWorkflow');
 
-async function persistState(workflowId) {
-  return (toState) => prisma.maintenanceWorkflow.update({ where: { id: workflowId }, data: { state: toState } });
-}
-
 async function loadContext(workflowId) {
   const workflow = await prisma.maintenanceWorkflow.findUnique({ where: { id: workflowId } });
   if (!workflow) throw new Error(`MaintenanceWorkflow ${workflowId} not found`);
@@ -31,7 +27,7 @@ async function proposeAppointment(workflowId, vendorId, proposedTimes) {
   await workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'APPOINTMENT_PROPOSED', transitions: TRANSITIONS,
-    actorType: 'AI', reason: 'Proposed appointment times to tenant', persist: await persistState(workflowId),
+    actorType: 'AI', reason: 'Proposed appointment times to tenant', persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   if (request.tenant.phone && request.tenant.smsConsent) {
@@ -59,7 +55,7 @@ async function confirmAppointment(appointmentId, { scheduledStart, scheduledEnd,
   await workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId: workflow.id,
     fromState: workflow.state, toState: 'APPOINTMENT_CONFIRMED', transitions: TRANSITIONS,
-    actorType: 'TENANT', reason: 'Tenant confirmed appointment time', persist: await persistState(workflow.id),
+    actorType: 'TENANT', reason: 'Tenant confirmed appointment time', persist: workflowEngine.maintenancePersist(workflow.id),
   });
 
   return appointment;
@@ -75,7 +71,7 @@ async function markInProgress(workflowId) {
   return workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'WORK_IN_PROGRESS', transitions: TRANSITIONS,
-    actorType: 'VENDOR', reason: 'Vendor began work', persist: await persistState(workflowId),
+    actorType: 'VENDOR', reason: 'Vendor began work', persist: workflowEngine.maintenancePersist(workflowId),
   });
 }
 
@@ -85,7 +81,7 @@ async function markCompleted(workflowId, appointmentId) {
   return workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'WORK_COMPLETED_PENDING_INVOICE', transitions: TRANSITIONS,
-    actorType: 'VENDOR', reason: 'Vendor marked work complete', persist: await persistState(workflowId),
+    actorType: 'VENDOR', reason: 'Vendor marked work complete', persist: workflowEngine.maintenancePersist(workflowId),
   });
 }
 
@@ -101,7 +97,7 @@ async function markNoShow(workflowId, appointmentId) {
   await workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'ESCALATED_MANUAL', transitions: TRANSITIONS,
-    actorType: 'SYSTEM', reason: 'Appointment no-show', persist: await persistState(workflowId),
+    actorType: 'SYSTEM', reason: 'Appointment no-show', persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   await escalationService.createEscalation({

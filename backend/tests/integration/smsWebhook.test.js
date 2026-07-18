@@ -2,10 +2,10 @@ const express = require('express');
 const request = require('supertest');
 
 const mockPrisma = {
-  tenantProfile: { findMany: jest.fn() },
+  tenantProfile: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   vendor: { findMany: jest.fn() },
   smsMessage: { create: jest.fn() },
-  maintenanceWorkflow: { findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  maintenanceWorkflow: { findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   vendorContactAttempt: { findFirst: jest.fn(), update: jest.fn(), count: jest.fn(), findMany: jest.fn(), create: jest.fn() },
   conversation: { findFirst: jest.fn(), create: jest.fn() },
   message: { create: jest.fn() },
@@ -16,6 +16,7 @@ const mockPrisma = {
   notification: { create: jest.fn() },
   agentPolicyOverride: { findUnique: jest.fn() },
   agentPolicyDefault: { findUnique: jest.fn() },
+  $transaction: jest.fn((fn) => fn(mockPrisma)),
 };
 jest.mock('../../src/lib/prisma', () => mockPrisma);
 
@@ -27,6 +28,11 @@ function wireStatefulWorkflow(initial) {
   mockPrisma.maintenanceWorkflow.update.mockImplementation(({ data }) => {
     row = { ...row, ...data };
     return Promise.resolve({ ...row });
+  });
+  mockPrisma.maintenanceWorkflow.updateMany.mockImplementation(({ where, data }) => {
+    if (where.state !== undefined && row.state !== where.state) return Promise.resolve({ count: 0 });
+    row = { ...row, ...data };
+    return Promise.resolve({ count: 1 });
   });
   return () => row;
 }
@@ -45,14 +51,32 @@ beforeEach(() => {
   mockPrisma.vendor.findMany.mockResolvedValue([]);
   mockPrisma.agentPolicyOverride.findUnique.mockResolvedValue(null);
   mockPrisma.agentPolicyDefault.findUnique.mockResolvedValue({ trustLevel: 'OPERATE_WITHIN_POLICY', settings: {} });
+  mockPrisma.maintenanceWorkflow.updateMany.mockResolvedValue({ count: 1 });
+  mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: null });
+  mockPrisma.tenantProfile.update.mockResolvedValue({});
 });
 
 afterEach(() => {
   aiClient.clearMockHandler();
   jest.clearAllMocks();
+  delete process.env.NODE_ENV;
 });
 
 describe('POST /api/webhooks/sms', () => {
+  it('refuses all requests (403) when NODE_ENV=production and SMS_PROVIDER is not "twilio" — fail-closed, not fail-open', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.SMS_PROVIDER; // misconfigured — would otherwise silently fall back to the always-valid mock signature
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+15551234567', Body: 'hello', MessageSid: 'SM1' });
+
+    expect(res.status).toBe(403);
+    expect(mockPrisma.smsMessage.create).not.toHaveBeenCalled();
+  });
+
   it('rejects a request with an invalid Twilio signature (403) and writes nothing to the DB', async () => {
     process.env.SMS_PROVIDER = 'twilio';
     process.env.TWILIO_AUTH_TOKEN = 'test-token';
@@ -138,5 +162,36 @@ describe('POST /api/webhooks/sms', () => {
     expect(mockPrisma.vendorContactAttempt.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'ACCEPTED' }) }),
     );
+  });
+
+  it('records opt-out and sends a confirmation when a matched tenant replies STOP, without touching any workflow', async () => {
+    mockPrisma.tenantProfile.findMany.mockResolvedValue([{ id: 'tenant-1', userId: 'user-1', phone: '+15551234567' }]);
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+15551234567', Body: 'STOP', MessageSid: 'SM4' });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.tenantProfile.update).toHaveBeenCalledWith({
+      where: { id: 'tenant-1' }, data: { smsOptOutAt: expect.any(Date) },
+    });
+    expect(mockPrisma.maintenanceWorkflow.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('clears opt-out when a previously opted-out tenant replies START', async () => {
+    mockPrisma.tenantProfile.findMany.mockResolvedValue([{ id: 'tenant-1', userId: 'user-1', phone: '+15551234567', smsOptOutAt: new Date() }]);
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+15551234567', Body: 'START', MessageSid: 'SM5' });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.tenantProfile.update).toHaveBeenCalledWith({
+      where: { id: 'tenant-1' }, data: { smsOptOutAt: null },
+    });
   });
 });

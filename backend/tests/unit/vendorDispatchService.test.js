@@ -1,5 +1,5 @@
 const mockPrisma = {
-  maintenanceWorkflow: { findUnique: jest.fn(), update: jest.fn() },
+  maintenanceWorkflow: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   maintenanceRequest: { findUnique: jest.fn() },
   vendor: { findMany: jest.fn() },
   vendorContactAttempt: { findMany: jest.fn(), create: jest.fn(), count: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
@@ -10,6 +10,7 @@ const mockPrisma = {
   notification: { create: jest.fn() },
   agentPolicyOverride: { findUnique: jest.fn() },
   agentPolicyDefault: { findUnique: jest.fn() },
+  $transaction: jest.fn((fn) => fn(mockPrisma)),
 };
 jest.mock('../../src/lib/prisma', () => mockPrisma);
 
@@ -27,6 +28,11 @@ function statefulWorkflow(initial) {
   mockPrisma.maintenanceWorkflow.update.mockImplementation(({ data }) => {
     row = { ...row, ...data };
     return Promise.resolve({ ...row });
+  });
+  mockPrisma.maintenanceWorkflow.updateMany.mockImplementation(({ where, data }) => {
+    if (where.state !== undefined && row.state !== where.state) return Promise.resolve({ count: 0 });
+    row = { ...row, ...data };
+    return Promise.resolve({ count: 1 });
   });
   return () => row;
 }

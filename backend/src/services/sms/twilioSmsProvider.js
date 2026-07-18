@@ -1,5 +1,6 @@
 const twilio = require('twilio');
 const prisma = require('../../lib/prisma');
+const { isOptedOut } = require('./optOutGuard');
 
 let client = null;
 function getClient() {
@@ -10,6 +11,11 @@ function getClient() {
 }
 
 async function sendSms({ to, body, tenantId, relatedWorkflowType, relatedWorkflowId }) {
+  if (await isOptedOut(tenantId)) {
+    console.log(`[SMS:twilio] Skipped — tenant ${tenantId} has opted out of SMS`);
+    return { providerMessageId: null, status: 'FAILED' };
+  }
+
   const message = await getClient().messages.create({
     from: process.env.TWILIO_FROM_NUMBER,
     to,

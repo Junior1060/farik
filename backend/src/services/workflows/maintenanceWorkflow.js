@@ -28,7 +28,10 @@ const TRANSITIONS = {
   APPOINTMENT_RESCHEDULED: ['APPOINTMENT_CONFIRMED', 'ESCALATED_MANUAL'],
   WORK_IN_PROGRESS: ['WORK_COMPLETED_PENDING_INVOICE', 'ESCALATED_MANUAL'],
   WORK_COMPLETED_PENDING_INVOICE: ['INVOICE_RECEIVED', 'RESOLVED'],
-  INVOICE_RECEIVED: ['INVOICE_EXTRACTED'],
+  // Extraction is best-effort (invoiceExtractionService returns null on failure/unsupported
+  // file), so a landlord must still be able to approve or dispute an invoice that never
+  // got AI-extracted and is stuck at INVOICE_RECEIVED — not just ones that reached INVOICE_EXTRACTED.
+  INVOICE_RECEIVED: ['INVOICE_EXTRACTED', 'INVOICE_APPROVED', 'INVOICE_DISPUTED'],
   INVOICE_EXTRACTED: ['INVOICE_APPROVED', 'INVOICE_DISPUTED'],
   INVOICE_APPROVED: ['RESOLVED'],
   INVOICE_DISPUTED: ['ESCALATED_MANUAL', 'INVOICE_APPROVED'],
@@ -36,10 +39,6 @@ const TRANSITIONS = {
   CANCELLED: [],
   ESCALATED_MANUAL: ['RESOLVED', 'CANCELLED'],
 };
-
-async function persistState(workflowId) {
-  return (toState) => prisma.maintenanceWorkflow.update({ where: { id: workflowId }, data: { state: toState } });
-}
 
 async function loadContext(maintenanceRequestId) {
   const request = await prisma.maintenanceRequest.findUnique({
@@ -85,7 +84,7 @@ async function escalateEmergency(workflowId, landlordId, request, matchedRules) 
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: 'INTAKE_RECEIVED', toState: 'EMERGENCY_ESCALATED', transitions: TRANSITIONS,
     actorType: 'SYSTEM', reason: `Deterministic emergency rule(s) matched: ${matchedRules.join(', ')}`,
-    metadata: { matchedRules }, persist: await persistState(workflowId),
+    metadata: { matchedRules }, persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   const safetyMessage = 'This sounds like it could be dangerous. Please move to a safe location now. '
@@ -122,7 +121,7 @@ async function sendDiagnosticQuestions(workflowId, landlordId, request, category
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: 'INTAKE_RECEIVED', toState: 'DIAGNOSTIC_QUESTIONS_SENT', transitions: TRANSITIONS,
     actorType: 'AI', reason: `Sent ${questions.length} diagnostic question(s) for category ${category}`,
-    metadata: { questions: questions.map((q) => q.key) }, persist: await persistState(workflowId),
+    metadata: { questions: questions.map((q) => q.key) }, persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   if (request.tenant.phone && request.tenant.smsConsent) {
@@ -160,7 +159,7 @@ async function recordTenantReply(workflowId, replyText) {
       landlordId, workflowType: 'MAINTENANCE', workflowId,
       fromState: workflow.state, toState: 'EMERGENCY_ESCALATED', transitions: TRANSITIONS,
       actorType: 'SYSTEM', reason: `Tenant reply revealed emergency indicator(s): ${matchedRules.join(', ')}`,
-      metadata: { matchedRules }, persist: await persistState(workflowId),
+      metadata: { matchedRules }, persist: workflowEngine.maintenancePersist(workflowId),
     });
     await escalateEmergency(workflowId, landlordId, request, matchedRules);
     return prisma.maintenanceWorkflow.findUnique({ where: { id: workflowId } });
@@ -169,7 +168,7 @@ async function recordTenantReply(workflowId, replyText) {
   await workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'DIAGNOSTIC_RESPONSE_RECEIVED', transitions: TRANSITIONS,
-    actorType: 'TENANT', reason: 'Tenant answered diagnostic questions', persist: await persistState(workflowId),
+    actorType: 'TENANT', reason: 'Tenant answered diagnostic questions', persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   return triageAndProceed(workflowId);
@@ -226,7 +225,7 @@ async function triageAndProceed(workflowId) {
         landlordId, workflowType: 'MAINTENANCE', workflowId,
         fromState: workflow.state, toState: 'ESCALATED_MANUAL', transitions: TRANSITIONS,
         actorType: 'SYSTEM', reason: 'AI triage failed schema validation; needs manual review',
-        metadata: { aiIssues: err.issues }, persist: await persistState(workflowId),
+        metadata: { aiIssues: err.issues }, persist: workflowEngine.maintenancePersist(workflowId),
       });
       await escalationService.createEscalation({
         landlordId,
@@ -251,14 +250,17 @@ async function triageAndProceed(workflowId) {
 
   await prisma.maintenanceWorkflow.update({
     where: { id: workflowId },
-    data: { urgency: result.urgency, policySnapshot: policy },
+    // Overwrite the initial deterministic category (e.g. "PLUMBING_LEAK", used only
+    // for diagnostic-question selection) with the AI's normalized lowercase category
+    // (e.g. "plumbing") so vendorDispatchService can match it against Vendor.specialty.
+    data: { urgency: result.urgency, category: result.category, policySnapshot: policy },
   });
   await prisma.maintenanceRequest.update({ where: { id: request.id }, data: { priority: result.priority } });
 
   await workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'TRIAGED', transitions: TRANSITIONS,
-    actorType: 'AI', reason: result.reasoning, metadata: { result }, persist: await persistState(workflowId),
+    actorType: 'AI', reason: result.reasoning, metadata: { result }, persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   if (canAutoApprove) {
@@ -266,14 +268,14 @@ async function triageAndProceed(workflowId) {
       landlordId, workflowType: 'MAINTENANCE', workflowId,
       fromState: 'TRIAGED', toState: 'APPROVED', transitions: TRANSITIONS,
       actorType: 'AI', reason: `Within policy: ${policy.trustLevel}, confidence ${result.confidence}, est. $${estimatedMax} <= limit $${maxAutoSpend}`,
-      persist: await persistState(workflowId),
+      persist: workflowEngine.maintenancePersist(workflowId),
     });
   } else {
     await workflowEngine.transition({
       landlordId, workflowType: 'MAINTENANCE', workflowId,
       fromState: 'TRIAGED', toState: 'AWAITING_LANDLORD_APPROVAL', transitions: TRANSITIONS,
       actorType: 'AI', reason: withinBudget ? 'Policy requires landlord approval' : `Estimated cost $${estimatedMax} exceeds auto-approve limit $${maxAutoSpend}`,
-      persist: await persistState(workflowId),
+      persist: workflowEngine.maintenancePersist(workflowId),
     });
     await escalationService.createEscalation({
       landlordId,
@@ -304,7 +306,7 @@ async function approveByLandlord(workflowId, userId) {
   return workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'APPROVED', transitions: TRANSITIONS,
-    actorType: 'LANDLORD', actorId: userId, reason: 'Landlord approved', persist: await persistState(workflowId),
+    actorType: 'LANDLORD', actorId: userId, reason: 'Landlord approved', persist: workflowEngine.maintenancePersist(workflowId),
   });
 }
 
@@ -316,7 +318,7 @@ async function cancel(workflowId, { actorType, actorId, reason }) {
   return workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'CANCELLED', transitions: TRANSITIONS,
-    actorType, actorId, reason, persist: await persistState(workflowId),
+    actorType, actorId, reason, persist: workflowEngine.maintenancePersist(workflowId),
   });
 }
 

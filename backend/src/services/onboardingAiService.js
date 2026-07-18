@@ -36,6 +36,27 @@ Rules:
 - Every key must be present on every row; use "" for unknowns.
 - If the input is unreadable or clearly not rental data, return "rows": [] with an explanatory warning.`;
 
+const DOCUMENT_TARGET_KEYS = [
+  'tenantName', 'unitNumber', 'propertyName',
+  'startDate', 'endDate', 'monthlyRent', 'deposit', 'notes',
+];
+
+const SYSTEM_PROMPT_DOCUMENT = `You are Farik's onboarding AI. A landlord has uploaded a single lease-related document (a signed lease agreement, a rental application, or similar) during import. Your job is to extract key lease details from it, if present.
+
+Output ONLY a single JSON object (no markdown, no prose) of the form:
+{
+  "tenantName": "", "unitNumber": "", "propertyName": "",
+  "startDate": "", "endDate": "", "monthlyRent": "", "deposit": "", "notes": "",
+  "warnings": [ "short notes about anything unclear or missing" ]
+}
+
+Rules:
+- Dates MUST be normalized to YYYY-MM-DD.
+- monthlyRent and deposit are plain numbers — strip "$", commas, and "/mo".
+- NEVER invent data. If a value is genuinely not present, set it to "" and add a warning. Do not fabricate names, dates, or amounts.
+- Every key must be present; use "" for unknowns.
+- If the document is unreadable or clearly not lease-related, return all fields as "" with an explanatory warning.`;
+
 const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 
 // Build the Claude content block(s) for whatever the landlord gave us.
@@ -121,6 +142,42 @@ function parseResult(rawText) {
   };
 }
 
+function parseDocumentResult(rawText) {
+  let jsonText = rawText.trim();
+  const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) jsonText = fence[1].trim();
+
+  if (!jsonText.startsWith('{')) {
+    const start = jsonText.indexOf('{');
+    const end = jsonText.lastIndexOf('}');
+    if (start !== -1 && end !== -1) jsonText = jsonText.slice(start, end + 1);
+  }
+
+  const parsed = JSON.parse(jsonText);
+
+  const out = {};
+  for (const key of DOCUMENT_TARGET_KEYS) {
+    out[key] = parsed[key] == null ? '' : String(parsed[key]).trim();
+  }
+  out.warnings = Array.isArray(parsed.warnings) ? parsed.warnings.filter((w) => typeof w === 'string') : [];
+
+  return out;
+}
+
+async function extractLeaseDocument(file) {
+  const content = await buildContent({ file });
+
+  const rawText = await aiClient.createMessage({
+    system: SYSTEM_PROMPT_DOCUMENT,
+    maxTokens: 2000,
+    timeoutMs: 90000,
+    retries: 1,
+    messages: [{ role: 'user', content }],
+  });
+
+  return parseDocumentResult(rawText);
+}
+
 async function extractPortfolio({ file, text }) {
   const content = await buildContent({ file, text });
 
@@ -138,4 +195,4 @@ async function extractPortfolio({ file, text }) {
   return parseResult(rawText);
 }
 
-module.exports = { extractPortfolio, TARGET_KEYS };
+module.exports = { extractPortfolio, TARGET_KEYS, extractLeaseDocument, DOCUMENT_TARGET_KEYS };

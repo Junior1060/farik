@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { authenticate, requireLandlord } = require('../middleware/auth');
+const { costSensitiveLimiter } = require('../middleware/rateLimiter');
 const ctrl = require('../controllers/importController');
 
 const router = express.Router();
@@ -88,6 +89,7 @@ router.post(
   '/ai',
   authenticate,
   requireLandlord,
+  costSensitiveLimiter,
   onboardingUpload.single('file'),
   ctrl.aiExtract,
 );

@@ -87,3 +87,52 @@ describe('extractPortfolio — JSON parsing without assistant prefill', () => {
     expect(result.rows[0].propertyName).toBe('Preamble');
   });
 });
+
+describe('extractLeaseDocument — single lease-document extraction', () => {
+  it('extracts lease fields from a .docx lease file', async () => {
+    mammoth.extractRawText.mockResolvedValue({ value: 'Lease for Alice Morgan, Unit 101, $2200/mo' });
+    aiClient.setMockHandler(() => JSON.stringify({
+      tenantName: 'Alice Morgan',
+      unitNumber: '101',
+      propertyName: 'Maple Court',
+      startDate: '2025-01-01',
+      endDate: '2026-01-01',
+      monthlyRent: '2200',
+      deposit: '2200',
+      notes: '',
+      warnings: [],
+    }));
+
+    const result = await onboardingAiService.extractLeaseDocument({ originalname: 'lease.docx', path: '/fake/lease.docx' });
+
+    expect(result.tenantName).toBe('Alice Morgan');
+    expect(result.unitNumber).toBe('101');
+    expect(result.monthlyRent).toBe('2200');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('normalizes missing fields to empty strings rather than throwing', async () => {
+    mammoth.extractRawText.mockResolvedValue({ value: 'illegible scan' });
+    aiClient.setMockHandler(() => JSON.stringify({ warnings: ['Could not read the document clearly'] }));
+
+    const result = await onboardingAiService.extractLeaseDocument({ originalname: 'lease.docx', path: '/fake/lease.docx' });
+
+    expect(result.tenantName).toBe('');
+    expect(result.unitNumber).toBe('');
+    expect(result.warnings).toEqual(['Could not read the document clearly']);
+  });
+
+  it('strips markdown fences the same way portfolio extraction does', async () => {
+    mammoth.extractRawText.mockResolvedValue({ value: 'some text' });
+    aiClient.setMockHandler(() => '```json\n' + JSON.stringify({ tenantName: 'Fenced', unitNumber: '', propertyName: '', startDate: '', endDate: '', monthlyRent: '', deposit: '', notes: '', warnings: [] }) + '\n```');
+
+    const result = await onboardingAiService.extractLeaseDocument({ originalname: 'x.docx', path: '/fake/x.docx' });
+
+    expect(result.tenantName).toBe('Fenced');
+  });
+
+  it('propagates unsupported file type errors so the controller can catch them per-file', async () => {
+    await expect(onboardingAiService.extractLeaseDocument({ originalname: 'lease.txt', path: '/fake/lease.txt' }))
+      .rejects.toThrow(/Unsupported file type/);
+  });
+});

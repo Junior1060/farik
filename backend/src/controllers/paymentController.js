@@ -53,11 +53,21 @@ const getAll = async (req, res, next) => {
 
 const create = async (req, res, next) => {
   try {
+    const landlordId = req.user.landlordProfile.id;
     const data = paymentSchema.parse(req.body);
+
+    // Verify the lease belongs to this landlord's own properties, and derive tenantId
+    // from the lease itself rather than trusting the request body — otherwise any
+    // landlord could forge a payment against any lease/tenant in the database.
+    const lease = await prisma.lease.findFirst({
+      where: { id: data.leaseId, unit: { property: { landlordId } } },
+    });
+    if (!lease) return res.status(404).json({ error: 'Lease not found' });
+
     const payment = await prisma.payment.create({
       data: {
-        leaseId: data.leaseId,
-        tenantId: data.tenantId,
+        leaseId: lease.id,
+        tenantId: lease.tenantId,
         amount: data.amount,
         dueDate: new Date(data.dueDate),
         paidDate: data.paidDate ? new Date(data.paidDate) : null,
@@ -74,6 +84,12 @@ const create = async (req, res, next) => {
 
 const update = async (req, res, next) => {
   try {
+    const landlordId = req.user.landlordProfile.id;
+    const existing = await prisma.payment.findFirst({
+      where: { id: req.params.id, lease: { unit: { property: { landlordId } } } },
+    });
+    if (!existing) return res.status(404).json({ error: 'Payment not found' });
+
     const data = paymentSchema.partial().parse(req.body);
     const updateData = {};
     if (data.amount !== undefined) updateData.amount = data.amount;

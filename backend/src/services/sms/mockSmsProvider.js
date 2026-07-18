@@ -1,7 +1,13 @@
 const crypto = require('crypto');
 const prisma = require('../../lib/prisma');
+const { isOptedOut } = require('./optOutGuard');
 
 async function sendSms({ to, body, tenantId, relatedWorkflowType, relatedWorkflowId }) {
+  if (await isOptedOut(tenantId)) {
+    console.log(`[SMS:mock] Skipped — tenant ${tenantId} has opted out of SMS`);
+    return { providerMessageId: null, status: 'FAILED' };
+  }
+
   const providerMessageId = `mock_${crypto.randomUUID()}`;
   console.log(`[SMS:mock] -> ${to}: ${body}`);
   await prisma.smsMessage.create({

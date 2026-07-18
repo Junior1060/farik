@@ -59,11 +59,11 @@ const upload = async (req, res, next) => {
   }
 };
 
-async function transitionWorkflow(workflowId, landlordId, fromState, toState, reason) {
+async function transitionWorkflow(workflowId, landlordId, fromState, toState, reason, tx) {
   return workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId, fromState, toState, transitions: TRANSITIONS,
-    actorType: 'SYSTEM', reason,
-    persist: (state) => prisma.maintenanceWorkflow.update({ where: { id: workflowId }, data: { state } }),
+    actorType: 'SYSTEM', reason, tx,
+    persist: workflowEngine.maintenancePersist(workflowId),
   });
 }
 
@@ -93,18 +93,25 @@ const approve = async (req, res, next) => {
     const request = await assertLandlordOwnsRequest(landlordId, invoice.maintenanceRequestId);
     if (!request) return res.status(404).json({ error: 'Maintenance request not found' });
 
-    const updated = await prisma.maintenanceInvoice.update({
-      where: { id: req.params.id },
-      data: { approvalStatus: 'APPROVED', approvedByUserId: req.user.id, approvedAt: new Date() },
-    });
+    // Invoice status write and workflow transition(s) must succeed or fail together —
+    // otherwise a failed transition (e.g. concurrent modification, invalid source state)
+    // would leave the invoice permanently mismarked "approved" with the workflow stuck.
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedInvoice = await tx.maintenanceInvoice.update({
+        where: { id: req.params.id },
+        data: { approvalStatus: 'APPROVED', approvedByUserId: req.user.id, approvedAt: new Date() },
+      });
 
-    if (request.workflow) {
-      const fromState = request.workflow.state;
-      if (['INVOICE_RECEIVED', 'INVOICE_EXTRACTED', 'INVOICE_DISPUTED'].includes(fromState)) {
-        await transitionWorkflow(request.workflow.id, landlordId, fromState, 'INVOICE_APPROVED', 'Landlord approved invoice');
-        await transitionWorkflow(request.workflow.id, landlordId, 'INVOICE_APPROVED', 'RESOLVED', 'Invoice approved — request resolved');
+      if (request.workflow) {
+        const fromState = request.workflow.state;
+        if (['INVOICE_RECEIVED', 'INVOICE_EXTRACTED', 'INVOICE_DISPUTED'].includes(fromState)) {
+          await transitionWorkflow(request.workflow.id, landlordId, fromState, 'INVOICE_APPROVED', 'Landlord approved invoice', tx);
+          await transitionWorkflow(request.workflow.id, landlordId, 'INVOICE_APPROVED', 'RESOLVED', 'Invoice approved — request resolved', tx);
+        }
       }
-    }
+
+      return updatedInvoice;
+    });
 
     res.json({ invoice: updated });
   } catch (err) {
@@ -122,17 +129,21 @@ const reject = async (req, res, next) => {
     const request = await assertLandlordOwnsRequest(landlordId, invoice.maintenanceRequestId);
     if (!request) return res.status(404).json({ error: 'Maintenance request not found' });
 
-    const updated = await prisma.maintenanceInvoice.update({
-      where: { id: req.params.id },
-      data: { approvalStatus: 'REJECTED' },
-    });
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedInvoice = await tx.maintenanceInvoice.update({
+        where: { id: req.params.id },
+        data: { approvalStatus: 'REJECTED' },
+      });
 
-    if (request.workflow) {
-      const fromState = request.workflow.state;
-      if (['INVOICE_RECEIVED', 'INVOICE_EXTRACTED'].includes(fromState)) {
-        await transitionWorkflow(request.workflow.id, landlordId, fromState, 'INVOICE_DISPUTED', `Landlord rejected invoice: ${reason}`);
+      if (request.workflow) {
+        const fromState = request.workflow.state;
+        if (['INVOICE_RECEIVED', 'INVOICE_EXTRACTED'].includes(fromState)) {
+          await transitionWorkflow(request.workflow.id, landlordId, fromState, 'INVOICE_DISPUTED', `Landlord rejected invoice: ${reason}`, tx);
+        }
       }
-    }
+
+      return updatedInvoice;
+    });
 
     res.json({ invoice: updated });
   } catch (err) {

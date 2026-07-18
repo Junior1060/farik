@@ -5,10 +5,6 @@ const escalationService = require('./escalationService');
 const { getSmsProvider } = require('./sms/smsProvider');
 const { TRANSITIONS } = require('./workflows/maintenanceWorkflow');
 
-async function persistState(workflowId) {
-  return (toState) => prisma.maintenanceWorkflow.update({ where: { id: workflowId }, data: { state: toState } });
-}
-
 async function loadWorkflowContext(workflowId) {
   const workflow = await prisma.maintenanceWorkflow.findUnique({ where: { id: workflowId } });
   if (!workflow) throw new Error(`MaintenanceWorkflow ${workflowId} not found`);
@@ -64,7 +60,7 @@ async function dispatchNextVendor(workflowId) {
     await workflowEngine.transition({
       landlordId, workflowType: 'MAINTENANCE', workflowId,
       fromState: workflow.state, toState: 'ESCALATED_MANUAL', transitions: TRANSITIONS,
-      actorType: 'SYSTEM', reason: 'No eligible vendor found for this category', persist: await persistState(workflowId),
+      actorType: 'SYSTEM', reason: 'No eligible vendor found for this category', persist: workflowEngine.maintenancePersist(workflowId),
     });
     await escalationService.createEscalation({
       landlordId,
@@ -81,7 +77,7 @@ async function dispatchNextVendor(workflowId) {
     await workflowEngine.transition({
       landlordId, workflowType: 'MAINTENANCE', workflowId,
       fromState: 'APPROVED', toState: 'VENDOR_SELECTION', transitions: TRANSITIONS,
-      actorType: 'AI', reason: `Selected vendor ${vendor.name}`, persist: await persistState(workflowId),
+      actorType: 'AI', reason: `Selected vendor ${vendor.name}`, persist: workflowEngine.maintenancePersist(workflowId),
     });
   }
 
@@ -100,7 +96,7 @@ async function dispatchNextVendor(workflowId) {
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: 'VENDOR_SELECTION', toState: 'VENDOR_CONTACT_ATTEMPTED', transitions: TRANSITIONS,
     actorType: 'AI', actorId: vendor.id, reason: `Contacted ${vendor.name} (attempt ${attemptNumber})`,
-    persist: await persistState(workflowId),
+    persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   return prisma.maintenanceWorkflow.findUnique({ where: { id: workflowId } });
@@ -128,14 +124,14 @@ async function handleVendorResponse(workflowId, vendorId, accepted) {
     return workflowEngine.transition({
       landlordId, workflowType: 'MAINTENANCE', workflowId,
       fromState: workflow.state, toState: 'VENDOR_CONFIRMED', transitions: TRANSITIONS,
-      actorType: 'VENDOR', actorId: vendorId, reason: 'Vendor accepted the job', persist: await persistState(workflowId),
+      actorType: 'VENDOR', actorId: vendorId, reason: 'Vendor accepted the job', persist: workflowEngine.maintenancePersist(workflowId),
     });
   }
 
   await workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'VENDOR_DECLINED', transitions: TRANSITIONS,
-    actorType: 'VENDOR', actorId: vendorId, reason: 'Vendor declined the job', persist: await persistState(workflowId),
+    actorType: 'VENDOR', actorId: vendorId, reason: 'Vendor declined the job', persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   return retryOrEscalate(workflowId);
@@ -151,7 +147,7 @@ async function retryOrEscalate(workflowId) {
     await workflowEngine.transition({
       landlordId, workflowType: 'MAINTENANCE', workflowId,
       fromState: workflow.state, toState: 'ESCALATED_MANUAL', transitions: TRANSITIONS,
-      actorType: 'SYSTEM', reason: `Exceeded max vendor retries (${maxRetries})`, persist: await persistState(workflowId),
+      actorType: 'SYSTEM', reason: `Exceeded max vendor retries (${maxRetries})`, persist: workflowEngine.maintenancePersist(workflowId),
     });
     await escalationService.createEscalation({
       landlordId,
@@ -167,7 +163,7 @@ async function retryOrEscalate(workflowId) {
   await workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'VENDOR_SELECTION', transitions: TRANSITIONS,
-    actorType: 'SYSTEM', reason: 'Retrying with next eligible vendor', persist: await persistState(workflowId),
+    actorType: 'SYSTEM', reason: 'Retrying with next eligible vendor', persist: workflowEngine.maintenancePersist(workflowId),
   });
 
   return dispatchNextVendor(workflowId);
@@ -197,7 +193,7 @@ async function checkVendorTimeouts() {
         landlordId, workflowType: 'MAINTENANCE', workflowId: attempt.maintenanceWorkflowId,
         fromState: 'VENDOR_CONTACT_ATTEMPTED', toState: 'VENDOR_CONTACT_FAILED', transitions: TRANSITIONS,
         actorType: 'SYSTEM', reason: `No vendor response after ${followUpHours}h`,
-        persist: await persistState(attempt.maintenanceWorkflowId),
+        persist: workflowEngine.maintenancePersist(attempt.maintenanceWorkflowId),
       });
       await retryOrEscalate(attempt.maintenanceWorkflowId);
     }

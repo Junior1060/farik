@@ -292,6 +292,7 @@ model Lease {
   unit     Unit          @relation(fields: [unitId], references: [id], onDelete: Cascade)
   payments Payment[]
   notices  Notice[]
+  documents UploadedDocument[]
 
   @@map("leases")
 }
@@ -670,6 +671,7 @@ model ImportBatch {
 model UploadedDocument {
   id           String   @id @default(cuid())
   landlordId   String
+  leaseId      String?
   originalName String
   storedName   String
   mimeType     String
@@ -678,6 +680,7 @@ model UploadedDocument {
   createdAt    DateTime @default(now())
 
   landlord LandlordProfile @relation(fields: [landlordId], references: [id], onDelete: Cascade)
+  lease    Lease?          @relation(fields: [leaseId], references: [id], onDelete: SetNull)
 
   @@map("uploaded_documents")
 }

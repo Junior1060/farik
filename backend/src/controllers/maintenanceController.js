@@ -125,6 +125,12 @@ const getOne = async (req, res, next) => {
 
 const update = async (req, res, next) => {
   try {
+    const landlordId = req.user.landlordProfile.id;
+    const existing = await prisma.maintenanceRequest.findFirst({
+      where: { id: req.params.id, unit: { property: { landlordId } } },
+    });
+    if (!existing) return res.status(404).json({ error: 'Maintenance request not found' });
+
     const data = updateSchema.parse(req.body);
     const updateData = {};
     if (data.status) {
