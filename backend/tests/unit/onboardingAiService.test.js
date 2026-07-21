@@ -6,10 +6,25 @@ jest.mock('fs', () => ({
   readFileSync: jest.fn(() => Buffer.from('fake-bytes')),
 }));
 
+const fs = require('fs');
+const XLSX = require('xlsx');
 const mammoth = require('mammoth');
 const WordExtractor = require('word-extractor');
 const aiClient = require('../../src/services/ai/aiClient');
 const onboardingAiService = require('../../src/services/onboardingAiService');
+
+// Build a real .xlsx buffer with `rowCount` data rows so XLSX.read can parse it for real.
+function buildXlsxBuffer(rowCount) {
+  const header = ['Property Name', 'Unit Number', 'Tenant First Name', 'Tenant Last Name', 'Tenant Email', 'Monthly Rent ($)'];
+  const rows = [header];
+  for (let i = 1; i <= rowCount; i++) {
+    rows.push([`Property ${i}`, `Unit ${i}`, `First${i}`, `Last${i}`, `tenant${i}@example.com`, `${1000 + i}`]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Properties');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
 
 afterEach(() => {
   aiClient.clearMockHandler();
@@ -85,6 +100,59 @@ describe('extractPortfolio — JSON parsing without assistant prefill', () => {
     const result = await onboardingAiService.extractPortfolio({ file: { originalname: 'x.docx', path: '/fake/x.docx' } });
 
     expect(result.rows[0].propertyName).toBe('Preamble');
+  });
+});
+
+describe('extractPortfolio — spreadsheet batching for large ("enterprise") imports', () => {
+  // A single Claude call truncates around ~100 units (verified: 150 rows hit
+  // stop_reason "max_tokens"). Anything over SPREADSHEET_BATCH_SIZE (60) data rows
+  // must be split into batches and merged instead of sent in one request.
+  it('keeps a small spreadsheet on the single-call path (no batching)', async () => {
+    fs.readFileSync.mockReturnValue(buildXlsxBuffer(5));
+    let callCount = 0;
+    aiClient.setMockHandler(() => {
+      callCount += 1;
+      return JSON.stringify({ rows: [{ propertyName: 'Small' }], summary: 'ok', warnings: [] });
+    });
+
+    const result = await onboardingAiService.extractPortfolio({ file: { originalname: 'small.xlsx', path: '/fake/small.xlsx' } });
+
+    expect(callCount).toBe(1);
+    expect(result.rows).toHaveLength(1);
+  });
+
+  it('splits a 130-row spreadsheet into 5 batched AI calls (30/batch) and merges the results with unique ids', async () => {
+    fs.readFileSync.mockReturnValue(buildXlsxBuffer(130)); // batches of 30 -> 30/30/30/30/10 = 5 calls
+    let callCount = 0;
+    aiClient.setMockHandler(({ messages }) => {
+      callCount += 1;
+      const text = messages[0].content[0].text;
+      const firstRow = text.match(/Property (\d+)/)[1];
+      return JSON.stringify({ rows: [{ propertyName: `Batch-${firstRow}` }], summary: '', warnings: [] });
+    });
+
+    const result = await onboardingAiService.extractPortfolio({ file: { originalname: 'big.xlsx', path: '/fake/big.xlsx' } });
+
+    expect(callCount).toBe(5);
+    expect(result.rows).toHaveLength(5);
+    expect(result.rows.map((r) => r._id)).toEqual(['ai-0', 'ai-1', 'ai-2', 'ai-3', 'ai-4']);
+    expect(result.rows.map((r) => r.propertyName).sort()).toEqual(['Batch-1', 'Batch-121', 'Batch-31', 'Batch-61', 'Batch-91']);
+    expect(result.summary).toMatch(/Found 5 propert/);
+  });
+
+  it('skips a batch that gets truncated instead of failing the whole import', async () => {
+    fs.readFileSync.mockReturnValue(buildXlsxBuffer(130));
+    aiClient.setMockHandler(({ messages }) => {
+      const text = messages[0].content[0].text;
+      if (text.includes('Property 61')) return { text: '', stopReason: 'max_tokens' };
+      const firstRow = text.match(/Property (\d+)/)[1];
+      return JSON.stringify({ rows: [{ propertyName: `Batch-${firstRow}` }], summary: '', warnings: [] });
+    });
+
+    const result = await onboardingAiService.extractPortfolio({ file: { originalname: 'big.xlsx', path: '/fake/big.xlsx' } });
+
+    expect(result.rows).toHaveLength(4); // 5 batches, the one truncated batch is skipped, not fatal
+    expect(result.warnings.some((w) => w.includes('too much data'))).toBe(true);
   });
 });
 

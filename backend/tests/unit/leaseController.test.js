@@ -1,6 +1,7 @@
 const mockPrisma = {
   unit: { findFirst: jest.fn(), update: jest.fn() },
-  lease: { create: jest.fn() },
+  lease: { create: jest.fn(), findMany: jest.fn() },
+  tenantProfile: { findUnique: jest.fn() },
 };
 jest.mock('../../src/lib/prisma', () => mockPrisma);
 
@@ -17,6 +18,11 @@ function mockReqRes({ body = {}, landlordId = 'landlord-1' } = {}) {
   return { req, res, next: jest.fn() };
 }
 
+beforeEach(() => {
+  mockPrisma.tenantProfile.findUnique.mockResolvedValue({ id: 'tenant-1' });
+  mockPrisma.lease.findMany.mockResolvedValue([]); // no prior leases anywhere — a genuine new tenant
+});
+
 afterEach(() => jest.clearAllMocks());
 
 describe('leaseController.create — cross-landlord IDOR protection', () => {
@@ -31,7 +37,18 @@ describe('leaseController.create — cross-landlord IDOR protection', () => {
     expect(mockPrisma.unit.update).not.toHaveBeenCalled();
   });
 
-  it('creates the lease when the unit belongs to this landlord', async () => {
+  it('404s when the tenantId does not correspond to any real tenant', async () => {
+    mockPrisma.unit.findFirst.mockResolvedValue({ id: 'unit-1' });
+    mockPrisma.tenantProfile.findUnique.mockResolvedValue(null);
+    const { req, res, next } = mockReqRes({ body: { ...validBody, unitId: 'unit-1' } });
+
+    await leaseController.create(req, res, next);
+
+    expect(res.statusCode).toBe(404);
+    expect(mockPrisma.lease.create).not.toHaveBeenCalled();
+  });
+
+  it('creates the lease for a brand-new tenant with no prior leases anywhere', async () => {
     mockPrisma.unit.findFirst.mockResolvedValue({ id: 'unit-1' });
     mockPrisma.lease.create.mockResolvedValue({ id: 'lease-1' });
     mockPrisma.unit.update.mockResolvedValue({});
@@ -40,5 +57,50 @@ describe('leaseController.create — cross-landlord IDOR protection', () => {
     await leaseController.create(req, res, next);
 
     expect(res.body.lease.id).toBe('lease-1');
+  });
+
+  it('creates the lease when the tenant already has a lease with this same landlord (renewal/second unit)', async () => {
+    mockPrisma.unit.findFirst.mockResolvedValue({ id: 'unit-1' });
+    mockPrisma.lease.findMany.mockResolvedValue([
+      { unit: { property: { landlordId: 'landlord-1' } } },
+    ]);
+    mockPrisma.lease.create.mockResolvedValue({ id: 'lease-2' });
+    mockPrisma.unit.update.mockResolvedValue({});
+    const { req, res, next } = mockReqRes({ body: { ...validBody, unitId: 'unit-1' }, landlordId: 'landlord-1' });
+
+    await leaseController.create(req, res, next);
+
+    expect(res.body.lease.id).toBe('lease-2');
+  });
+
+  it('403s and never creates a lease when the tenant already has a lease with a DIFFERENT landlord', async () => {
+    mockPrisma.unit.findFirst.mockResolvedValue({ id: 'unit-1' });
+    mockPrisma.lease.findMany.mockResolvedValue([
+      { unit: { property: { landlordId: 'some-other-landlord' } } },
+    ]);
+    const { req, res, next } = mockReqRes({ body: { ...validBody, unitId: 'unit-1' }, landlordId: 'landlord-1' });
+
+    await leaseController.create(req, res, next);
+
+    expect(res.statusCode).toBe(403);
+    expect(mockPrisma.lease.create).not.toHaveBeenCalled();
+    expect(mockPrisma.unit.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('leaseController.canLinkTenant', () => {
+  it('allows a tenant with zero prior leases', async () => {
+    mockPrisma.lease.findMany.mockResolvedValue([]);
+    await expect(leaseController.canLinkTenant('t1', 'landlord-1')).resolves.toBe(true);
+  });
+
+  it('allows a tenant whose existing lease is with this landlord', async () => {
+    mockPrisma.lease.findMany.mockResolvedValue([{ unit: { property: { landlordId: 'landlord-1' } } }]);
+    await expect(leaseController.canLinkTenant('t1', 'landlord-1')).resolves.toBe(true);
+  });
+
+  it('blocks a tenant whose existing leases are all with other landlords', async () => {
+    mockPrisma.lease.findMany.mockResolvedValue([{ unit: { property: { landlordId: 'landlord-2' } } }]);
+    await expect(leaseController.canLinkTenant('t1', 'landlord-1')).resolves.toBe(false);
   });
 });

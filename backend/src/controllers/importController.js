@@ -4,6 +4,8 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const prisma = require('../lib/prisma');
 const onboardingAiService = require('../services/onboardingAiService');
+const aiClient = require('../services/ai/aiClient');
+const { canLinkTenant } = require('./leaseController');
 
 // ─── Column mapping: spreadsheet header → internal key ────────────────────────
 const COL_MAP = {
@@ -153,6 +155,17 @@ const aiExtract = async (req, res, next) => {
 
     res.json(result);
   } catch (err) {
+    if (err.code === 'MAX_TOKENS_TRUNCATED') {
+      return res.status(413).json({
+        error: 'This file has too much data for one import. Try splitting it into smaller files (a few hundred units each) and importing them one at a time.',
+      });
+    }
+    if (aiClient.isServiceError(err)) {
+      console.error('AI import service error:', err);
+      const serviceErr = new Error('The AI import service is temporarily unavailable. Please try again in a bit, or use the spreadsheet template instead.');
+      serviceErr.status = 502;
+      return next(serviceErr);
+    }
     next(err);
   } finally {
     if (req.file) { try { fs.unlinkSync(req.file.path); } catch (_) {} }
@@ -227,7 +240,9 @@ const uploadDocuments = async (req, res, next) => {
         extracted = await onboardingAiService.extractLeaseDocument(f);
       } catch (extractErr) {
         console.error(`Lease document extraction failed for ${f.originalname}:`, extractErr);
-        extracted = { error: 'Could not read this document automatically.' };
+        extracted = { error: aiClient.isServiceError(extractErr)
+          ? 'AI extraction is temporarily unavailable — the document was saved, but details were not read automatically.'
+          : 'Could not read this document automatically.' };
       }
 
       const doc = await prisma.uploadedDocument.create({
@@ -342,6 +357,15 @@ const confirm = async (req, res, next) => {
               },
             });
             results.tenants++;
+          }
+
+          // A row whose email matches an existing tenant who already has a lease with a
+          // DIFFERENT landlord must not be silently linked here — that would let an import
+          // attach (and bill) a real tenant who has never had any relationship with this
+          // landlord. New tenants (no prior leases) and this landlord's own existing
+          // tenants (renewals) are unaffected.
+          if (!(await canLinkTenant(tenant.id, landlordId))) {
+            throw new Error(`${row.tenantEmail} already has a lease with another landlord and cannot be linked via import.`);
           }
 
           // ── Create Lease ───────────────────────────────────────────────────

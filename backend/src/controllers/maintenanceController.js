@@ -53,6 +53,13 @@ const create = async (req, res, next) => {
   try {
     const tenantId = req.user.tenantProfile.id;
     const data = requestSchema.parse(req.body);
+
+    // The unit must belong to a lease this tenant actually holds — otherwise any
+    // tenant account could file (and trigger real SMS/vendor-dispatch workflows
+    // against) a maintenance request for a unit they have no relationship with.
+    const hasLease = await prisma.lease.findFirst({ where: { tenantId, unitId: data.unitId } });
+    if (!hasLease) return res.status(404).json({ error: 'Unit not found' });
+
     const photos = (req.files || []).map((f) => `/uploads/maintenance/${f.filename}`);
 
     const request = await prisma.maintenanceRequest.create({

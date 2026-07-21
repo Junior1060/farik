@@ -90,7 +90,7 @@ const PaymentsPage = () => {
       />
 
       {/* Summary stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
         <StatCard title="Collected" value={formatCurrency(summary.totalCollected || 0)} icon={CheckCircle} iconBg="bg-emerald-50" iconColor="text-emerald-600" />
         <StatCard title="Pending" value={formatCurrency(summary.totalPending || 0)} icon={Clock} iconBg="bg-amber-50" iconColor="text-amber-600" />
         <StatCard title="Overdue" value={formatCurrency(summary.totalOverdue || 0)} icon={AlertCircle} iconBg="bg-red-50" iconColor="text-red-600" />

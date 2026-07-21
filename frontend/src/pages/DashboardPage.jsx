@@ -274,7 +274,7 @@ const DashboardPage = () => {
         <NeedsYouPanel />
 
         {/* Stats row */}
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 min-[420px]:grid-cols-2 xl:grid-cols-4 gap-4">
           <StatCard
             title="Total Collected"
             value={formatCurrency(stats.totalCollected || 0)}

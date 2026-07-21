@@ -48,4 +48,16 @@ describe('aiClient — real provider timeout/retry behavior', () => {
       .rejects.toThrow(/timed out/);
     expect(attempts).toBe(3); // initial attempt + 2 retries
   });
+
+  it('flags a max_tokens-truncated response with a distinct, non-retryable error code instead of returning cut-off text', async () => {
+    let attempts = 0;
+    mockCreate.mockImplementation(() => {
+      attempts += 1;
+      return Promise.resolve({ content: [{ type: 'text', text: '{"rows": [' }], stop_reason: 'max_tokens' });
+    });
+
+    await expect(aiClient.createMessage({ system: 's', messages: [], timeoutMs: 500, retries: 2 }))
+      .rejects.toMatchObject({ code: 'MAX_TOKENS_TRUNCATED' });
+    expect(attempts).toBe(1); // not retried — the same input truncates the same way every time
+  });
 });

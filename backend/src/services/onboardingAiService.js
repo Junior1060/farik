@@ -59,6 +59,101 @@ Rules:
 
 const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 
+// Verified empirically against the real 21-key schema: 30 rows/batch uses ~5500 of
+// the 8000-token output budget (safe margin), 40 rows hits ~7300 (too close given
+// real-world data has longer notes/addresses than synthetic test rows), and 50 rows
+// truncates outright (stop_reason "max_tokens"). Past this many data rows, split the
+// spreadsheet into batches and merge the results instead of sending it all in one
+// request — this is what lets "enterprise" imports (hundreds of units) actually
+// complete instead of always truncating.
+const SPREADSHEET_BATCH_SIZE = 30;
+const BATCH_CONCURRENCY = 3;
+
+function isSpreadsheetExt(ext) {
+  return ['.xlsx', '.xls', '.csv'].includes(ext);
+}
+
+// Split every sheet's data rows into batches of SPREADSHEET_BATCH_SIZE, each carrying
+// its own copy of the header row so Claude can still make sense of the columns.
+function buildSpreadsheetChunks(file) {
+  const wb = XLSX.read(fs.readFileSync(file.path), { type: 'buffer', raw: false });
+  const chunks = [];
+
+  for (const name of wb.SheetNames) {
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[name]);
+    const lines = csv.split('\n').filter((l) => l.trim() !== '');
+    if (lines.length < 2) continue;
+
+    const [header, ...dataLines] = lines;
+    for (let i = 0; i < dataLines.length; i += SPREADSHEET_BATCH_SIZE) {
+      const batchLines = dataLines.slice(i, i + SPREADSHEET_BATCH_SIZE);
+      chunks.push(`--- Sheet: ${name} ---\n${header}\n${batchLines.join('\n')}`);
+    }
+  }
+
+  return chunks;
+}
+
+async function runWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const current = next++;
+      results[current] = await fn(items[current], current);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+async function callPortfolioAI(content) {
+  const rawText = await aiClient.createMessage({
+    system: SYSTEM_PROMPT,
+    maxTokens: 8000,
+    // Document/image extraction + a large max_tokens generation genuinely takes
+    // longer than routine triage calls — give it more room, but only one retry
+    // so a slow request doesn't compound into a multi-minute wait.
+    timeoutMs: 90000,
+    retries: 1,
+    messages: [{ role: 'user', content }],
+  });
+  return parseResult(rawText);
+}
+
+async function extractSpreadsheetPortfolioBatched(file) {
+  const chunks = buildSpreadsheetChunks(file);
+  if (chunks.length === 0) return { rows: [], summary: '', warnings: [] };
+
+  const batchResults = await runWithConcurrency(chunks, BATCH_CONCURRENCY, async (chunk, i) => {
+    try {
+      return await callPortfolioAI([{ type: 'text', text: `Here is a portion of the landlord's spreadsheet:\n\n${chunk}` }]);
+    } catch (err) {
+      if (err.code === 'MAX_TOKENS_TRUNCATED') {
+        return { rows: [], summary: '', warnings: [`Batch ${i + 1} had too much data to process and was skipped — try splitting this file into smaller sheets.`] };
+      }
+      throw err;
+    }
+  });
+
+  const rows = [];
+  const warnings = [];
+  for (const r of batchResults) {
+    rows.push(...r.rows);
+    warnings.push(...r.warnings);
+  }
+  // Re-tag ids so they're unique across merged batches (each batch independently starts at "ai-0").
+  rows.forEach((row, idx) => { row._id = `ai-${idx}`; });
+
+  const properties = new Set(rows.map((r) => r.propertyName).filter(Boolean));
+  const totalRent = rows.reduce((sum, r) => sum + (parseFloat(r.monthlyRent) || 0), 0);
+  const summary = rows.length
+    ? `Found ${properties.size} propert${properties.size === 1 ? 'y' : 'ies'} — ${rows.length} units, $${totalRent.toLocaleString()}/mo total`
+    : '';
+
+  return { rows, summary, warnings };
+}
+
 // Build the Claude content block(s) for whatever the landlord gave us.
 async function buildContent({ file, text }) {
   if (text && text.trim()) {
@@ -179,20 +274,16 @@ async function extractLeaseDocument(file) {
 }
 
 async function extractPortfolio({ file, text }) {
+  if (file && !(text && text.trim())) {
+    const ext = path.extname(file.originalname || file.path).toLowerCase();
+    if (isSpreadsheetExt(ext)) {
+      const chunks = buildSpreadsheetChunks(file);
+      if (chunks.length > 1) return extractSpreadsheetPortfolioBatched(file);
+    }
+  }
+
   const content = await buildContent({ file, text });
-
-  const rawText = await aiClient.createMessage({
-    system: SYSTEM_PROMPT,
-    maxTokens: 8000,
-    // Document/image extraction + a large max_tokens generation genuinely takes
-    // longer than routine triage calls — give it more room, but only one retry
-    // so a slow request doesn't compound into a multi-minute wait.
-    timeoutMs: 90000,
-    retries: 1,
-    messages: [{ role: 'user', content }],
-  });
-
-  return parseResult(rawText);
+  return callPortfolioAI(content);
 }
 
 module.exports = { extractPortfolio, TARGET_KEYS, extractLeaseDocument, DOCUMENT_TARGET_KEYS };

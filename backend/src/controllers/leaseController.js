@@ -53,6 +53,20 @@ const getOne = async (req, res, next) => {
   }
 };
 
+// A tenant with no prior leases anywhere is a genuine new tenant being onboarded — safe to
+// link. A tenant who already has a lease with THIS landlord (renewal / second unit) is also
+// safe. But a tenant whose only existing leases are with OTHER landlords already has an
+// established housing relationship elsewhere — linking them here would let any landlord
+// attach (and bill) a tenant they've never actually interacted with. Block that case.
+async function canLinkTenant(tenantId, landlordId) {
+  const existingLeases = await prisma.lease.findMany({
+    where: { tenantId },
+    select: { unit: { select: { property: { select: { landlordId: true } } } } },
+  });
+  if (existingLeases.length === 0) return true;
+  return existingLeases.some((l) => l.unit.property.landlordId === landlordId);
+}
+
 const create = async (req, res, next) => {
   try {
     const landlordId = req.user.landlordProfile.id;
@@ -62,6 +76,13 @@ const create = async (req, res, next) => {
       where: { id: data.unitId, property: { landlordId } },
     });
     if (!unit) return res.status(404).json({ error: 'Unit not found' });
+
+    const tenant = await prisma.tenantProfile.findUnique({ where: { id: data.tenantId } });
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+
+    if (!(await canLinkTenant(data.tenantId, landlordId))) {
+      return res.status(403).json({ error: 'This tenant already has a lease with another landlord and cannot be added here.' });
+    }
 
     const lease = await prisma.lease.create({
       data: {
@@ -128,4 +149,4 @@ const remove = async (req, res, next) => {
   }
 };
 
-module.exports = { getAll, getOne, create, update, remove };
+module.exports = { getAll, getOne, create, update, remove, canLinkTenant };
