@@ -103,7 +103,7 @@ In your local terminal (runs against your Supabase DB):
 ```bash
 cd ~/Desktop/Rentora/backend
 npm run db:push
-```
+``` 
 
 This is already done — Supabase is your production database.
 
@@ -112,7 +112,7 @@ This is already done — Supabase is your production database.
 ## Step 7: Final Checks
 
 - [ ] Frontend loads at Vercel URL
-- [ ] Login works (landlord@rentora.com / password123)
+- [ ] Login works (demo@farik.ca / password123)
 - [ ] Landlord can connect Stripe account
 - [ ] Tenant can click Pay Now and reach Stripe Checkout
 - [ ] Payment success redirects back to portal
@@ -125,7 +125,7 @@ This is already done — Supabase is your production database.
 
 | Role     | Email                     | Password    |
 |----------|---------------------------|-------------|
-| Landlord | landlord@rentora.com      | password123 |
+| Landlord | demo@farik.ca             | password123 |
 | Tenant   | alice.morgan@email.com    | password123 |
 
 ---

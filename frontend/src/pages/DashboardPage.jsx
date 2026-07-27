@@ -286,7 +286,7 @@ const DashboardPage = () => {
           <StatCard
             title="Pending Rent"
             value={formatCurrency(stats.totalPending || 0)}
-            subtitle={`${stats.maintenanceOpen || 0} overdue`}
+            subtitle={`${breakdown.overdue || 0} overdue`}
             icon={Clock}
             iconBg="bg-amber-50"
             iconColor="text-amber-600"

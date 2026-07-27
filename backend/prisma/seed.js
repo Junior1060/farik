@@ -26,7 +26,7 @@ async function main() {
   // --- Landlord ---
   const landlordUser = await prisma.user.create({
     data: {
-      email: 'landlord@rentora.com',
+      email: 'demo@farik.ca',
       password: hashedPassword,
       role: 'LANDLORD',
       landlordProfile: {
@@ -108,6 +108,7 @@ async function main() {
     prisma.unit.create({ data: { propertyId: property2.id, name: 'Unit 6', floor: 1, bedrooms: 2, bathrooms: 1, sqft: 950, rentAmount: 1500, isOccupied: true } }),
     prisma.unit.create({ data: { propertyId: property2.id, name: 'Suite 12', floor: 2, bedrooms: 2, bathrooms: 2, sqft: 1100, rentAmount: 1650, isOccupied: true } }),
     prisma.unit.create({ data: { propertyId: property2.id, name: 'Suite 14', floor: 2, bedrooms: 1, bathrooms: 1, sqft: 700, rentAmount: 1250, isOccupied: false } }),
+    prisma.unit.create({ data: { propertyId: property2.id, name: 'Suite 16', floor: 2, bedrooms: 2, bathrooms: 1, sqft: 980, rentAmount: 1550, isOccupied: false } }),
   ]);
 
   const now = new Date();
@@ -127,10 +128,10 @@ async function main() {
 
   // --- Payments ---
   const paymentData = [
-    // Alice - all paid
-    { leaseId: leases[0].id, tenantId: tenants[0].id, amount: 1200, dueDate: monthsAgo(2), paidDate: monthsAgo(2), status: 'PAID' },
+    // Alice - all paid, not yet due for next month
     { leaseId: leases[0].id, tenantId: tenants[0].id, amount: 1200, dueDate: monthsAgo(1), paidDate: monthsAgo(1), status: 'PAID' },
-    { leaseId: leases[0].id, tenantId: tenants[0].id, amount: 1200, dueDate: new Date(now.getFullYear(), now.getMonth(), 1), paidDate: null, status: 'PENDING' },
+    { leaseId: leases[0].id, tenantId: tenants[0].id, amount: 1200, dueDate: new Date(now.getFullYear(), now.getMonth(), 1), paidDate: new Date(now.getFullYear(), now.getMonth(), 1), status: 'PAID' },
+    { leaseId: leases[0].id, tenantId: tenants[0].id, amount: 1200, dueDate: monthsFromNow(1), paidDate: null, status: 'PENDING' },
     // James - paid last month, pending this month
     { leaseId: leases[1].id, tenantId: tenants[1].id, amount: 1450, dueDate: monthsAgo(2), paidDate: monthsAgo(2), status: 'PAID' },
     { leaseId: leases[1].id, tenantId: tenants[1].id, amount: 1450, dueDate: monthsAgo(1), paidDate: monthsAgo(1), status: 'PAID' },
@@ -256,7 +257,7 @@ async function main() {
   console.log('✅ Seed complete!');
   console.log('');
   console.log('Demo credentials:');
-  console.log('  Landlord: landlord@rentora.com / password123');
+  console.log('  Landlord: demo@farik.ca / password123');
   console.log('  Tenant:   alice.morgan@email.com / password123');
   console.log('  Tenant:   sophia.chen@email.com / password123 (has overdue rent)');
 }

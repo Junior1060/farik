@@ -13,6 +13,7 @@ const pageTitles = {
   '/messages': 'Messages',
   '/notices': 'Notices',
   '/maintenance': 'Maintenance',
+  '/import': 'Import',
   '/agent': 'AI Manager',
   '/timeline': 'Autopilot Timeline',
   '/profile': 'Profile',

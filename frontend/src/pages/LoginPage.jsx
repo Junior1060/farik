@@ -31,7 +31,7 @@ const LoginPage = () => {
 
   const fillDemo = (type) => {
     if (type === 'landlord') {
-      setValue('email', 'landlord@rentora.com');
+      setValue('email', 'demo@farik.ca');
       setValue('password', 'password123');
     } else {
       setValue('email', 'alice.morgan@email.com');

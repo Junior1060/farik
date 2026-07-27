@@ -90,7 +90,7 @@ npm run dev
 
 | Role | Email | Password |
 |------|-------|----------|
-| Landlord | landlord@rentora.com | password123 |
+| Landlord | demo@farik.ca | password123 |
 | Tenant (Alice) | alice.morgan@email.com | password123 |
 | Tenant (Sophia) | sophia.chen@email.com | password123 |
 | Tenant (Priya) | priya.patel@email.com | password123 |

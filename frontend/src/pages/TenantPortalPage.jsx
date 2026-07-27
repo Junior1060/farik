@@ -18,7 +18,7 @@ import { getMyPayments } from '../services/paymentService';
 import { getNotices } from '../services/noticeService';
 import { getMaintenanceRequests, createMaintenanceRequest } from '../services/maintenanceService';
 import { getConversations, getThread, sendMessage } from '../services/messageService';
-import { formatDate, formatRelative, formatCurrency, fullName, getInitials } from '../utils/formatters';
+import { formatDate, formatRelative, formatCurrency, fullName, getInitials, daysUntil } from '../utils/formatters';
 import { useForm } from 'react-hook-form';
 import api, { assetUrl } from '../services/api';
 
@@ -33,6 +33,7 @@ const TenantPortalPage = () => {
   const [activeConvId, setActiveConvId] = useState(null);
   const [maintPhotos, setMaintPhotos] = useState([]); // { file, url }[]
   const bottomRef = useRef(null);
+  const tabRefs = useRef({});
 
   const profile = user?.profile;
 
@@ -62,6 +63,10 @@ const TenantPortalPage = () => {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [threadData?.messages]);
+
+  useEffect(() => {
+    tabRefs.current[activeTab]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }, [activeTab]);
 
   const handleLogout = () => {
     logout();
@@ -140,6 +145,7 @@ const TenantPortalPage = () => {
   ];
 
   const pendingPayment = payments.find((p) => p.status === 'PENDING' || p.status === 'OVERDUE');
+  const isRentOverdue = pendingPayment && (pendingPayment.status === 'OVERDUE' || daysUntil(pendingPayment.dueDate) < 0);
 
   return (
     <div className="min-h-screen bg-surface-100">
@@ -173,6 +179,7 @@ const TenantPortalPage = () => {
             {tabs.map(({ id, icon: Icon, label }) => (
               <button
                 key={id}
+                ref={(el) => { tabRefs.current[id] = el; }}
                 onClick={() => setActiveTab(id)}
                 className={`flex items-center gap-2 px-4 py-3.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                   activeTab === id
@@ -195,23 +202,37 @@ const TenantPortalPage = () => {
           <div className="space-y-4">
             {/* Rent due card */}
             {pendingPayment ? (
-              <div className={`card border-2 ${pendingPayment.status === 'OVERDUE' ? 'border-red-300 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+              <div className={`card border-2 ${isRentOverdue ? 'border-red-300 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
                 <div className="flex items-center gap-3">
-                  {pendingPayment.status === 'OVERDUE' ? (
+                  {isRentOverdue ? (
                     <AlertCircle size={24} className="text-red-600 flex-shrink-0" />
                   ) : (
                     <Clock size={24} className="text-amber-600 flex-shrink-0" />
                   )}
                   <div>
-                    <p className={`font-semibold ${pendingPayment.status === 'OVERDUE' ? 'text-red-800' : 'text-amber-800'}`}>
-                      {pendingPayment.status === 'OVERDUE' ? 'Rent Overdue!' : 'Rent Due'}
+                    <p className={`font-semibold ${isRentOverdue ? 'text-red-800' : 'text-amber-800'}`}>
+                      {isRentOverdue ? 'Rent Overdue!' : 'Rent Due'}
                     </p>
-                    <p className={`text-sm ${pendingPayment.status === 'OVERDUE' ? 'text-red-700' : 'text-amber-700'}`}>
-                      {formatCurrency(pendingPayment.amount)} was due on {formatDate(pendingPayment.dueDate)}
+                    <p className={`text-sm ${isRentOverdue ? 'text-red-700' : 'text-amber-700'}`}>
+                      {isRentOverdue
+                        ? `${formatCurrency(pendingPayment.amount)} is overdue — was due on ${formatDate(pendingPayment.dueDate)}`
+                        : `${formatCurrency(pendingPayment.amount)} is due on ${formatDate(pendingPayment.dueDate)}`}
                     </p>
                   </div>
-                  <div className="ml-auto">
-                    <PaymentStatusBadge status={pendingPayment.status} />
+                  <div className="ml-auto flex items-center gap-2">
+                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${
+                      isRentOverdue
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : 'bg-amber-50 text-amber-700 border-amber-200'
+                    }`}>
+                      {isRentOverdue ? 'Overdue' : 'Due'}
+                    </span>
+                    <button
+                      onClick={() => setActiveTab('payments')}
+                      className="btn-primary text-xs px-3 py-1.5 whitespace-nowrap"
+                    >
+                      Pay now
+                    </button>
                   </div>
                 </div>
               </div>

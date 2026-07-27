@@ -23,6 +23,9 @@ import PaymentSuccessPage from './pages/PaymentSuccessPage';
 import AgentPage from './pages/AgentPage';
 import AutopilotTimelinePage from './pages/AutopilotTimelinePage';
 import ImportPage from './pages/ImportPage';
+import PrivacyPage from './pages/PrivacyPage';
+import TermsPage from './pages/TermsPage';
+import SmsConsentPage from './pages/SmsConsentPage';
 
 const ProtectedRoute = ({ children, role }) => {
   const { user, loading } = useAuth();
@@ -42,6 +45,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/sms-consent" element={<SmsConsentPage />} />
       <Route path="/login" element={user ? <Navigate to={user.role === 'LANDLORD' ? '/dashboard' : '/tenant'} replace /> : <LoginPage />} />
       <Route path="/register" element={user ? <Navigate to={user.role === 'LANDLORD' ? '/dashboard' : '/tenant'} replace /> : <RegisterPage />} />
 

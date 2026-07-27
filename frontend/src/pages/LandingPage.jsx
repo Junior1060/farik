@@ -7,11 +7,11 @@ import {
 
 const features = [
   { icon: BarChart3, title: 'Dashboard Analytics', description: 'Real-time overview of rent collection, occupancy rates, and property performance.' },
-  { icon: CreditCard, title: 'Payment Tracking', description: 'Track paid, pending, and overdue rent. Record payments and view history.' },
+  { icon: CreditCard, title: 'Payment Tracking', description: 'Track paid, pending, and overdue rent. Record payments and view history. Automatic rent reminders by text.' },
   { icon: Users, title: 'Tenant Management', description: 'Manage all your tenants, view profiles, lease details, and payment status.' },
   { icon: Wrench, title: 'Maintenance Requests', description: 'Receive and manage maintenance requests. Track progress from open to resolved.' },
-  { icon: Bell, title: 'Late Notices', description: 'Generate professional late rent notices for overdue tenants with one click.' },
-  { icon: MessageSquare, title: 'Messaging', description: 'Communicate directly with tenants through a clean in-app messaging system.' },
+  { icon: Bell, title: 'Late Notices', description: 'Generate late rent notices that comply with Saskatchewan tenancy rules — one click.' },
+  { icon: MessageSquare, title: 'Text Your Tenants', description: 'Text your tenants — Farik works over SMS. Tenants reply to a normal text. No downloads, no logins.' },
 ];
 
 const LandingPage = () => (
@@ -36,15 +36,15 @@ const LandingPage = () => (
     <section className="max-w-6xl mx-auto px-4 py-20 text-center">
       <div className="inline-flex items-center gap-2 bg-brand-50 text-brand-700 text-xs font-medium px-3 py-1.5 rounded-full border border-brand-200 mb-6">
         <CheckCircle size={12} />
-        Property management for modern landlords
+        Built in Saskatchewan for small landlords
       </div>
       <h1 className="text-5xl sm:text-6xl font-bold text-slate-900 tracking-tight leading-tight">
-        Manage your rentals<br />
-        <span className="text-brand-500">without the chaos</span>
+        Your tenants text.<br />
+        <span className="text-brand-500">Farik handles the rest.</span>
       </h1>
       <p className="text-slate-500 text-lg mt-6 max-w-2xl mx-auto leading-relaxed">
-        Farik gives small and medium landlords a professional platform to manage tenants,
-        track rent, handle maintenance, and communicate — all from one clean dashboard.
+        Rent collection, maintenance, and notices on autopilot — over SMS.
+        No app for your tenants to download, no dashboard to learn.
       </p>
       <div className="flex items-center justify-center gap-3 mt-8">
         <Link to="/register" className="btn-primary text-base px-6 py-3">
@@ -61,7 +61,7 @@ const LandingPage = () => (
       <div className="max-w-6xl mx-auto px-4">
         <div className="text-center mb-12">
           <h2 className="text-3xl font-bold text-slate-900">Everything you need</h2>
-          <p className="text-slate-500 mt-3">Powerful tools built for landlords who want clarity, not complexity.</p>
+          <p className="text-slate-500 mt-3">Powerful tools built for landlords who run their business from their phone.</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {features.map(({ icon: Icon, title, description }) => (
@@ -80,12 +80,17 @@ const LandingPage = () => (
 
     {/* Footer */}
     <footer className="border-t border-slate-100 py-8 px-4">
-      <div className="max-w-6xl mx-auto flex items-center justify-between">
+      <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 bg-brand-500 rounded-md flex items-center justify-center">
             <Building2 size={12} className="text-white" />
           </div>
           <span className="font-semibold text-slate-700 text-sm">Farik</span>
+        </div>
+        <div className="flex items-center gap-5">
+          <Link to="/privacy" className="text-xs text-slate-400 hover:text-slate-600">Privacy</Link>
+          <Link to="/terms" className="text-xs text-slate-400 hover:text-slate-600">Terms</Link>
+          <Link to="/sms-consent" className="text-xs text-slate-400 hover:text-slate-600">SMS Policy</Link>
         </div>
         <p className="text-xs text-slate-400">© {new Date().getFullYear()} Farik. All rights reserved.</p>
       </div>

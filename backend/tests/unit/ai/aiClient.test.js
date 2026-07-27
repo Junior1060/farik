@@ -1,6 +1,7 @@
 // These tests exercise the real (non-mock) provider path, so they override the
 // global AI_PROVIDER=mock set in tests/setup/env.js and mock the Anthropic SDK
 // itself instead.
+
 describe('aiClient — real provider timeout/retry behavior', () => {
   let aiClient;
   let mockCreate;
@@ -23,7 +24,9 @@ describe('aiClient — real provider timeout/retry behavior', () => {
 
   it('times out using the default timeout when no override is given, for a call that never resolves', async () => {
     mockCreate.mockImplementation(() => new Promise(() => {})); // never resolves
+    
     // Override just for this call so the test doesn't have to wait for the real default.
+    
     await expect(aiClient.createMessage({ system: 's', messages: [], timeoutMs: 30, retries: 0 }))
       .rejects.toThrow(/timed out/);
   });
