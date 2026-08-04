@@ -50,8 +50,10 @@
     @apply bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-xl transition-colors duration-150 flex items-center gap-2 text-sm;
   }
 
+  /* text-base on mobile is deliberate: iOS Safari auto-zooms into any input
+     whose font-size is below 16px. Desktop keeps the original 14px. */
   .input {
-    @apply w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition text-sm;
+    @apply w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition text-base sm:text-sm;
   }
 
   .label {

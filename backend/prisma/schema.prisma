@@ -684,3 +684,48 @@ model UploadedDocument {
 
   @@map("uploaded_documents")
 }
+
+// ─── Founding Landlord Pilot ──────────────────────────────────────────────────
+// Public marketing-site submissions. Deliberately NOT related to User: an
+// applicant has no account yet, and the row must survive them creating one.
+
+enum PilotApplicationStatus {
+  NEW
+  CONTACTED
+  CALL_BOOKED
+  PILOT_ACCEPTED
+  PILOT_DECLINED
+}
+
+enum PreferredContactMethod {
+  EMAIL
+  PHONE
+  TEXT
+}
+
+model PilotApplication {
+  id                      String                 @id @default(cuid())
+  fullName                String
+  email                   String
+  phone                   String
+  city                    String
+  unitsManaged            Int
+  companyName             String?
+  currentManagementMethod String?
+  biggestProblem          String
+  preferredContactMethod  PreferredContactMethod
+  additionalNotes         String?
+  status                  PilotApplicationStatus @default(NEW)
+  source                  String                 @default("website")
+  internalNotes           String?
+  bookedCallAt            DateTime?
+  bookingReference        String?
+  // Salted hash only — enough to spot abuse patterns, never the raw address.
+  submitterIpHash         String?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+
+  @@index([email])
+  @@index([status, createdAt])
+  @@map("pilot_applications")
+}

@@ -21,6 +21,7 @@ import PropertiesPage from './pages/PropertiesPage';
 import ProfilePage from './pages/ProfilePage';
 import PaymentSuccessPage from './pages/PaymentSuccessPage';
 import AutopilotPage from './pages/AutopilotPage';
+import PilotApplicationsPage from './pages/PilotApplicationsPage';
 import ImportPage from './pages/ImportPage';
 import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
@@ -75,6 +76,11 @@ export default function App() {
         <Route path="/agent" element={<Navigate to="/autopilot" replace />} />
         <Route path="/timeline" element={<Navigate to="/autopilot?tab=activity" replace />} />
         <Route path="/import" element={<ImportPage />} />
+        {/* Farik staff only. The route is reachable by any signed-in landlord,
+            but the API returns 403 unless the account is on ADMIN_EMAILS, and
+            the page renders an access notice in that case. Server-side is the
+            real boundary — this is not hidden-URL security. */}
+        <Route path="/admin/pilot-applications" element={<PilotApplicationsPage />} />
       </Route>
 
       <Route path="/payment/success" element={<PaymentSuccessPage />} />

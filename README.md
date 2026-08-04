@@ -196,7 +196,124 @@ PUT    /api/notices/:id
 GET    /api/maintenance
 POST   /api/maintenance         (tenant)
 PUT    /api/maintenance/:id     (landlord)
+
+GET    /api/pilot-applications/config   (public — is booking configured?)
+POST   /api/pilot-applications          (public — submit an application)
+GET    /api/pilot-applications          (admin allowlist)
+PATCH  /api/pilot-applications/:id      (admin allowlist)
 ```
+
+---
+
+## Founding Landlord Pilot
+
+The pilot section at the bottom of `/` posts a real application to
+`POST /api/pilot-applications`, stores it in the `pilot_applications` table,
+emails the team and the applicant, and then offers the applicant a
+"Book a 15-minute call" button.
+
+**Every part of this degrades safely.** Missing email config or a missing
+booking link never blocks a submission and never surfaces a configuration
+message to the applicant — the server logs a warning instead.
+
+### Configure email
+
+Notifications reuse the existing Nodemailer/SMTP service
+(`backend/src/services/emailService.js`) — the same transport the Autopilot
+escalation emails use. There is no second email provider to set up.
+
+```bash
+# backend/.env
+SMTP_HOST="smtp.example.com"
+SMTP_PORT="587"
+SMTP_SECURE="false"
+SMTP_USER="..."
+SMTP_PASS="..."
+SMTP_FROM='"Farik" <noreply@farik.ca>'
+
+PILOT_NOTIFICATION_EMAIL="founders@yourdomain.ca"   # where applications land
+```
+
+With `SMTP_HOST`/`SMTP_USER` blank, emails are logged to the console instead of
+sent — useful locally. With `PILOT_NOTIFICATION_EMAIL` blank, the applicant still
+gets their confirmation and the team notification is skipped with a warning.
+
+### Configure the scheduling link
+
+```bash
+# backend/.env
+BOOKING_URL="https://cal.com/farik/15min"    # or a Calendly link
+```
+
+The backend serves this to the browser from `GET /api/pilot-applications/config`,
+so there is a single source of truth and no risk of the frontend and the
+confirmation email disagreeing. Applicant details (`name`, `email`, `phone`,
+`city`, `units`, `pilot_ref`) are appended as query parameters — both Cal.com and
+Calendly prefill from those.
+
+`frontend/.env` may set `VITE_BOOKING_URL` as a fallback, but only for a frontend
+deployed before the API is reachable.
+
+### Configure admin access
+
+There is no admin role in the schema. Access to submitted applications is an
+explicit email allowlist checked against the authenticated user's own account:
+
+```bash
+# backend/.env
+ADMIN_EMAILS="you@yourdomain.ca,cofounder@yourdomain.ca"
+```
+
+Then sign in as that user and open `/admin/pilot-applications`. An empty
+allowlist means nobody can read applications — it fails closed.
+
+### Run the migration
+
+```bash
+cd backend
+npx prisma migrate deploy     # production / CI
+npx prisma migrate dev        # local, also regenerates the client
+npx prisma generate           # if you only pulled new schema changes
+```
+
+The migration is `prisma/migrations/20260804090000_pilot_applications`. It adds
+the `pilot_applications` table plus the `PilotApplicationStatus` and
+`PreferredContactMethod` enums. It is additive — no existing table is touched.
+
+### Test the form locally
+
+```bash
+cd backend  && npm run dev     # :5000
+cd frontend && npm run dev     # :5173, proxies /api
+```
+
+Open `http://localhost:5173/#pilot`, fill the form, submit. Then:
+
+- **Verify the submission** — `npx prisma studio` in `backend/` and open the
+  `PilotApplication` model, or:
+  ```bash
+  psql "$DATABASE_URL" -c 'select id, "fullName", email, city, "unitsManaged", status, "createdAt" from pilot_applications order by "createdAt" desc limit 5;'
+  ```
+- **Verify the emails** — with SMTP unset, both appear in the backend console as
+  `[Email] (No SMTP configured) → …`. The submission log line reads
+  `[pilot] Application <id> stored. team_email=… applicant_email=… booking=…`
+  and deliberately contains no applicant PII.
+- **Verify booking prefill** — the success panel's button href should carry
+  `?name=…&email=…&pilot_ref=…`.
+
+### Test the booking fallback
+
+Clear `BOOKING_URL` in `backend/.env`, restart the API, and submit again. The
+success panel should read *"The Farik team will contact you within one business
+day"* with no booking button, the confirmation email should omit the button, and
+the server log should carry the `[pilot] BOOKING_URL is not configured` warning.
+Nothing about the configuration is shown to the applicant.
+
+### Spam and abuse controls
+
+An off-screen honeypot field (`website`), a 10-per-hour-per-IP rate limit on the
+public endpoint, server-side zod validation independent of the client, a 10-minute
+idempotency window per email address, and salted-hash-only IP storage.
 
 ---
 

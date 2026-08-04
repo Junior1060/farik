@@ -1,8 +1,14 @@
 import React from 'react';
 import { screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
+import { vi } from 'vitest';
 import renderWithRouter from '../../test/renderWithRouter';
 import LandingPage from '../LandingPage';
+
+vi.mock('../../services/pilotService', () => ({
+  submitPilotApplication: vi.fn(),
+  getPilotConfig: vi.fn(() => Promise.resolve({ bookingUrl: null })),
+}));
 
 describe('LandingPage', () => {
   it('leads with the SMS-first, 1–20 unit positioning', () => {
@@ -74,10 +80,18 @@ describe('LandingPage', () => {
     expect(screen.getByText(/not a substitute for legal advice/i)).toBeInTheDocument();
   });
 
-  it('renders the pilot form disabled when no contact address is configured', () => {
+  it('renders a working pilot application form', () => {
     renderWithRouter(<LandingPage />);
-    // VITE_PILOT_CONTACT_EMAIL is unset under test.
-    expect(screen.getByLabelText('Your name')).toBeDisabled();
-    expect(screen.getByRole('button', { name: /Apply for the pilot/i })).toBeDisabled();
+    expect(screen.getByLabelText(/^Full name/)).toBeEnabled();
+    expect(screen.getByLabelText(/^Email address/)).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Apply for the pilot/i })).toBeEnabled();
+  });
+
+  it('never tells a visitor the deployment is misconfigured', () => {
+    renderWithRouter(<LandingPage />);
+    const text = document.body.textContent;
+    expect(text).not.toMatch(/has not been configured/i);
+    expect(text).not.toMatch(/read-only/i);
+    expect(text).not.toMatch(/handled by email/i);
   });
 });

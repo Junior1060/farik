@@ -1,12 +1,11 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
 import {
   Building2, MessageSquare, Wrench, Bell, CreditCard, ShieldCheck,
   CheckCircle, ArrowRight, Upload, Phone, Bot, ClipboardList, Eye,
   UserCheck, Lock, ScrollText, Scale,
 } from 'lucide-react';
-import InfoBanner from '../components/ui/InfoBanner';
-import { PILOT_CONTACT_EMAIL } from '../config/contact';
+import PilotApplicationForm from '../components/pilot/PilotApplicationForm';
 
 // ── Content ──────────────────────────────────────────────────────────────────
 
@@ -163,92 +162,6 @@ const Logo = ({ size = 'md' }) => (
   </div>
 );
 
-function PilotForm() {
-  const [form, setForm] = useState({ name: '', email: '', city: '', units: '', challenge: '' });
-  const configured = !!PILOT_CONTACT_EMAIL;
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-
-  const mailto = configured
-    ? `mailto:${PILOT_CONTACT_EMAIL}?subject=${encodeURIComponent('Farik founding landlord pilot application')}&body=${encodeURIComponent(
-        `Name: ${form.name}\nEmail: ${form.email}\nCity: ${form.city}\nUnits managed: ${form.units}\n\nBiggest property-management headache:\n${form.challenge}\n`,
-      )}`
-    : undefined;
-
-  const fields = [
-    { id: 'pilot-name', key: 'name', label: 'Your name', type: 'text', placeholder: 'Jordan Blake' },
-    { id: 'pilot-email', key: 'email', label: 'Email address', type: 'email', placeholder: 'you@example.com' },
-    { id: 'pilot-city', key: 'city', label: 'City', type: 'text', placeholder: 'Saskatoon' },
-    { id: 'pilot-units', key: 'units', label: 'Units you manage', type: 'number', placeholder: '6' },
-  ];
-
-  return (
-    <form
-      className="space-y-4"
-      onSubmit={(e) => e.preventDefault()}
-      aria-describedby={configured ? undefined : 'pilot-unconfigured'}
-    >
-      {/* TODO: replace the mailto flow below with POST /api/pilot-applications
-          once a pilot-application endpoint exists on the backend. */}
-      {!configured && (
-        <InfoBanner variant="info" title="Applications are handled by email" className="mb-1">
-          <span id="pilot-unconfigured">
-            The contact address has not been configured for this deployment yet, so this form is read-only.
-          </span>
-        </InfoBanner>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {fields.map(({ id, key, label, type, placeholder }) => (
-          <div key={key}>
-            <label className="label" htmlFor={id}>{label}</label>
-            <input
-              id={id}
-              type={type}
-              className="input"
-              placeholder={placeholder}
-              value={form[key]}
-              onChange={set(key)}
-              disabled={!configured}
-            />
-          </div>
-        ))}
-      </div>
-
-      <div>
-        <label className="label" htmlFor="pilot-challenge">What takes the most of your time today?</label>
-        <textarea
-          id="pilot-challenge"
-          rows={3}
-          className="input resize-none"
-          placeholder="Chasing rent, after-hours maintenance texts, paperwork…"
-          value={form.challenge}
-          onChange={set('challenge')}
-          disabled={!configured}
-        />
-      </div>
-
-      {configured ? (
-        <a href={mailto} className="btn-primary w-full justify-center py-3 text-base">
-          Apply for the pilot <ArrowRight size={16} aria-hidden="true" />
-        </a>
-      ) : (
-        <button type="button" className="btn-primary w-full justify-center py-3 text-base" disabled>
-          Apply for the pilot
-        </button>
-      )}
-
-      {configured && (
-        <p className="text-xs text-slate-500 text-center">
-          This opens your email app addressed to{' '}
-          <span className="font-medium text-slate-700">{PILOT_CONTACT_EMAIL}</span>.
-        </p>
-      )}
-      <p className="text-xs text-slate-500 text-center">
-        Pilot spaces are limited so each landlord can receive personal onboarding.
-      </p>
-    </form>
-  );
-}
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -501,8 +414,12 @@ const LandingPage = () => (
             </div>
 
             <div className="card">
-              <h3 className="section-title mb-4">Apply for the pilot</h3>
-              <PilotForm />
+              <h3 className="section-title">Apply for the pilot</h3>
+              <p className="text-sm text-slate-600 mt-1.5 mb-5 leading-relaxed">
+                Tell us a little about your properties. After applying, you can book a short call
+                with the Farik team.
+              </p>
+              <PilotApplicationForm />
             </div>
           </div>
         </div>

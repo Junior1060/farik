@@ -8,6 +8,16 @@ const { startScheduler } = require('./services/schedulerService');
 
 const app = express();
 
+// Behind Render/Railway/Vercel there is exactly one proxy hop. Without this,
+// req.ip is the proxy's address and every rate limiter would bucket the whole
+// internet together. Override with TRUST_PROXY_HOPS if your topology differs.
+app.set(
+  'trust proxy',
+  process.env.TRUST_PROXY_HOPS
+    ? Number(process.env.TRUST_PROXY_HOPS)
+    : process.env.NODE_ENV === 'production' ? 1 : false,
+);
+
 // Middleware
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
@@ -44,6 +54,7 @@ app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/appointments', require('./routes/appointments'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/import', require('./routes/import'));
+app.use('/api/pilot-applications', require('./routes/pilotApplications'));
 
 // Serve uploaded documents (read-only)
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
