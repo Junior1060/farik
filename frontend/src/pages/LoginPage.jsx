@@ -61,7 +61,7 @@ const LoginPage = () => {
         <div className="relative space-y-8">
           <div>
             <h2 className="text-4xl font-bold text-white leading-tight tracking-tight">
-              The AI property manager<br />for landlords with 1–20 units.
+              The AI property manager<br />for landlords with 1–100 units.
             </h2>
             <p className="text-indigo-200 mt-4 text-lg leading-relaxed">
               Your tenants text. Farik handles the routine work — and you approve anything that matters.

@@ -123,7 +123,7 @@ const FAQ = [
   },
   {
     q: 'Who is Farik for?',
-    a: 'Farik is initially designed for independent landlords managing approximately 1–20 units.',
+    a: 'Farik is initially designed for independent landlords managing approximately 1–100 units.',
   },
   {
     q: 'Can Farik replace my current phone number?',
@@ -206,7 +206,7 @@ const LandingPage = () => (
           Built in Saskatchewan for independent landlords
         </div>
         <h1 id="hero-title" className="text-4xl sm:text-5xl lg:text-6xl font-bold text-slate-900 tracking-tight leading-[1.1]">
-          The AI property manager for landlords with 1–20 units.<br />
+          The AI property manager for landlords with 1–100 units.<br />
           <span className="text-brand-500">Your tenants text. Farik handles the routine work.</span>
         </h1>
         <p className="text-slate-600 text-lg mt-6 max-w-2xl mx-auto leading-relaxed">

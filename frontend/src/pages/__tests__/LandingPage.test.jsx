@@ -11,10 +11,10 @@ vi.mock('../../services/pilotService', () => ({
 }));
 
 describe('LandingPage', () => {
-  it('leads with the SMS-first, 1–20 unit positioning', () => {
+  it('leads with the SMS-first, 1–100 unit positioning', () => {
     renderWithRouter(<LandingPage />);
     const h1 = screen.getByRole('heading', { level: 1 });
-    expect(h1).toHaveTextContent('The AI property manager for landlords with 1–20 units.');
+    expect(h1).toHaveTextContent('The AI property manager for landlords with 1–100 units.');
     expect(h1).toHaveTextContent('Your tenants text. Farik handles the routine work.');
   });
 
