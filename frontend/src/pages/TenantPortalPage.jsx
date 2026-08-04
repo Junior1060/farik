@@ -2,9 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Home, CreditCard, FileText, Bell, MessageSquare, Wrench,
   LogOut, Building2, Send, CheckCircle, AlertCircle, Clock, User, Lock,
-  ImagePlus, X
+  ImagePlus, X, Smartphone
 } from 'lucide-react';
-import { updateProfile, changePassword } from '../services/profileService';
+import { updateProfile, changePassword, getMessagingConfig } from '../services/profileService';
 import { createCheckoutSession } from '../services/stripeService';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -13,18 +13,84 @@ import PaymentStatusBadge from '../components/ui/PaymentStatusBadge';
 import StatusBadge from '../components/ui/StatusBadge';
 import PriorityBadge from '../components/ui/PriorityBadge';
 import Modal from '../components/ui/Modal';
+import Tabs from '../components/ui/Tabs';
+import InfoBanner from '../components/ui/InfoBanner';
+import { noticeStatus } from '../components/notices/noticeStatus';
 import useFetch from '../hooks/useFetch';
 import { getMyPayments } from '../services/paymentService';
 import { getNotices } from '../services/noticeService';
 import { getMaintenanceRequests, createMaintenanceRequest } from '../services/maintenanceService';
 import { getConversations, getThread, sendMessage } from '../services/messageService';
-import { formatDate, formatRelative, formatCurrency, fullName, getInitials, daysUntil } from '../utils/formatters';
+import { formatDate, formatRelative, formatCurrency, fullName, getInitials, daysUntil, daysUntilLabel } from '../utils/formatters';
 import { useForm } from 'react-hook-form';
 import api, { assetUrl } from '../services/api';
+
+/**
+ * The number tenants text, or null when no SMS provider is configured for this
+ * deployment. Never substitute a placeholder — the card must say so instead.
+ */
+function useMessagingNumber() {
+  const [number, setNumber] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    getMessagingConfig()
+      .then((d) => { if (!cancelled) setNumber(d?.messagingNumber ?? null); })
+      .catch(() => { /* treat any failure as unconfigured */ });
+    return () => { cancelled = true; };
+  }, []);
+  return number;
+}
+
+/**
+ * Texting is the primary way to reach Farik; this portal is the record of it.
+ * TODO: passwordless magic-link sign-in would suit an SMS-first tenant better,
+ * but auth is JWT + password only today. Keep the existing secure login.
+ */
+function NeedHelpCard({ messagingNumber, onOpenMessages }) {
+  return (
+    <section className="card border-brand-200 bg-brand-50" aria-labelledby="need-help-heading">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+        <div className="w-11 h-11 bg-white rounded-xl flex items-center justify-center flex-shrink-0 border border-brand-200">
+          <Smartphone size={20} className="text-brand-600" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 id="need-help-heading" className="font-semibold text-slate-900">Need help?</h2>
+          <p className="text-sm text-slate-700 mt-0.5">
+            Text Farik for maintenance requests, rent questions, and property updates.
+          </p>
+        </div>
+        <div className="flex-shrink-0">
+          {messagingNumber ? (
+            <a href={`sms:${messagingNumber}`} className="btn-primary justify-center whitespace-nowrap">
+              Text Farik — {messagingNumber}
+            </a>
+          ) : (
+            <button type="button" className="btn-primary justify-center" disabled>
+              Text Farik
+            </button>
+          )}
+        </div>
+      </div>
+      {!messagingNumber && (
+        <InfoBanner variant="info" className="mt-4">
+          Messaging number not configured. Use the Messages tab to reach your landlord in the meantime.{' '}
+          <button
+            type="button"
+            onClick={onOpenMessages}
+            className="underline font-medium hover:text-brand-700"
+          >
+            Open Messages
+          </button>
+        </InfoBanner>
+      )}
+    </section>
+  );
+}
 
 const TenantPortalPage = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const messagingNumber = useMessagingNumber();
   const [activeTab, setActiveTab] = useState('overview');
   const [showMaintModal, setShowMaintModal] = useState(false);
   const [messageText, setMessageText] = useState('');
@@ -33,7 +99,6 @@ const TenantPortalPage = () => {
   const [activeConvId, setActiveConvId] = useState(null);
   const [maintPhotos, setMaintPhotos] = useState([]); // { file, url }[]
   const bottomRef = useRef(null);
-  const tabRefs = useRef({});
 
   const profile = user?.profile;
 
@@ -64,8 +129,11 @@ const TenantPortalPage = () => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [threadData?.messages]);
 
+  // Keep the active tab visible on narrow screens (the strip scrolls horizontally).
   useEffect(() => {
-    tabRefs.current[activeTab]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    document
+      .getElementById(`tab-${activeTab}`)
+      ?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }, [activeTab]);
 
   const handleLogout = () => {
@@ -162,7 +230,7 @@ const TenantPortalPage = () => {
           <div className="flex items-center gap-3">
             <div className="text-right hidden sm:block">
               <p className="text-sm font-medium">{profile?.firstName} {profile?.lastName}</p>
-              <p className="text-xs text-slate-400">{user?.email}</p>
+              <p className="text-xs text-slate-500">{user?.email}</p>
             </div>
             <button onClick={handleLogout} className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors text-sm font-medium">
               <LogOut size={15} />
@@ -175,23 +243,13 @@ const TenantPortalPage = () => {
       {/* Tabs */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4">
-          <div className="flex gap-0 overflow-x-auto">
-            {tabs.map(({ id, icon: Icon, label }) => (
-              <button
-                key={id}
-                ref={(el) => { tabRefs.current[id] = el; }}
-                onClick={() => setActiveTab(id)}
-                className={`flex items-center gap-2 px-4 py-3.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                  activeTab === id
-                    ? 'border-brand-500 text-brand-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                <Icon size={15} />
-                {label}
-              </button>
-            ))}
-          </div>
+          <Tabs
+            tabs={tabs}
+            value={activeTab}
+            onChange={setActiveTab}
+            variant="underline"
+            ariaLabel="Tenant portal sections"
+          />
         </div>
       </div>
 
@@ -200,42 +258,67 @@ const TenantPortalPage = () => {
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (
           <div className="space-y-4">
+            <NeedHelpCard
+              messagingNumber={messagingNumber}
+              onOpenMessages={() => setActiveTab('messages')}
+            />
+
             {/* Rent due card */}
             {pendingPayment ? (
-              <div className={`card border-2 ${isRentOverdue ? 'border-red-300 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
-                <div className="flex items-center gap-3">
+              <section
+                className={`card border-2 ${isRentOverdue ? 'border-red-300 bg-red-50' : 'border-amber-200 bg-amber-50'}`}
+                aria-labelledby="rent-status-heading"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-start gap-4">
                   {isRentOverdue ? (
-                    <AlertCircle size={24} className="text-red-600 flex-shrink-0" />
+                    <AlertCircle size={24} className="text-red-700 flex-shrink-0" aria-hidden="true" />
                   ) : (
-                    <Clock size={24} className="text-amber-600 flex-shrink-0" />
+                    <Clock size={24} className="text-amber-700 flex-shrink-0" aria-hidden="true" />
                   )}
-                  <div>
-                    <p className={`font-semibold ${isRentOverdue ? 'text-red-800' : 'text-amber-800'}`}>
-                      {isRentOverdue ? 'Rent Overdue!' : 'Rent Due'}
-                    </p>
-                    <p className={`text-sm ${isRentOverdue ? 'text-red-700' : 'text-amber-700'}`}>
-                      {isRentOverdue
-                        ? `${formatCurrency(pendingPayment.amount)} is overdue — was due on ${formatDate(pendingPayment.dueDate)}`
-                        : `${formatCurrency(pendingPayment.amount)} is due on ${formatDate(pendingPayment.dueDate)}`}
-                    </p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 id="rent-status-heading" className={`font-semibold ${isRentOverdue ? 'text-red-900' : 'text-amber-900'}`}>
+                        {isRentOverdue ? 'Rent overdue' : 'Rent due'}
+                      </h2>
+                      <PaymentStatusBadge status={pendingPayment.status} />
+                    </div>
+                    <dl className={`mt-2.5 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm ${isRentOverdue ? 'text-red-900' : 'text-amber-900'}`}>
+                      <div>
+                        <dt className="text-xs opacity-80">Amount</dt>
+                        <dd className="font-semibold mt-0.5">{formatCurrency(pendingPayment.amount)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs opacity-80">Originally due</dt>
+                        <dd className="font-semibold mt-0.5">{formatDate(pendingPayment.dueDate)}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs opacity-80">Status</dt>
+                        <dd className="font-semibold mt-0.5">{daysUntilLabel(pendingPayment.dueDate)}</dd>
+                      </div>
+                    </dl>
                   </div>
-                  <div className="ml-auto flex items-center gap-2">
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border whitespace-nowrap ${
-                      isRentOverdue
-                        ? 'bg-red-50 text-red-700 border-red-200'
-                        : 'bg-amber-50 text-amber-700 border-amber-200'
-                    }`}>
-                      {isRentOverdue ? 'Overdue' : 'Due'}
-                    </span>
+                  <div className="flex flex-wrap gap-2 flex-shrink-0">
                     <button
                       onClick={() => setActiveTab('payments')}
-                      className="btn-primary text-xs px-3 py-1.5 whitespace-nowrap"
+                      className="btn-primary text-xs px-3 py-2 whitespace-nowrap"
                     >
                       Pay now
                     </button>
+                    {messagingNumber ? (
+                      <a href={`sms:${messagingNumber}`} className="btn-secondary text-xs px-3 py-2 whitespace-nowrap">
+                        Ask for help
+                      </a>
+                    ) : (
+                      <button
+                        onClick={() => setActiveTab('messages')}
+                        className="btn-secondary text-xs px-3 py-2 whitespace-nowrap"
+                      >
+                        Contact landlord
+                      </button>
+                    )}
                   </div>
                 </div>
-              </div>
+              </section>
             ) : (
               <div className="card border-emerald-200 bg-emerald-50">
                 <div className="flex items-center gap-3">
@@ -257,27 +340,27 @@ const TenantPortalPage = () => {
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                   <div>
-                    <p className="text-xs text-slate-400">Unit</p>
+                    <p className="text-xs text-slate-500">Unit</p>
                     <p className="text-sm font-semibold text-slate-800 mt-0.5">{activeLease.unit?.name}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-400">Property</p>
+                    <p className="text-xs text-slate-500">Property</p>
                     <p className="text-sm font-semibold text-slate-800 mt-0.5">{activeLease.unit?.property?.name || '—'}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-400">Monthly Rent</p>
+                    <p className="text-xs text-slate-500">Monthly Rent</p>
                     <p className="text-sm font-semibold text-slate-800 mt-0.5">{formatCurrency(activeLease.monthlyRent)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-400">Lease Start</p>
+                    <p className="text-xs text-slate-500">Lease Start</p>
                     <p className="text-sm font-semibold text-slate-800 mt-0.5">{formatDate(activeLease.startDate)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-400">Lease End</p>
+                    <p className="text-xs text-slate-500">Lease End</p>
                     <p className="text-sm font-semibold text-slate-800 mt-0.5">{formatDate(activeLease.endDate)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-400">Status</p>
+                    <p className="text-xs text-slate-500">Status</p>
                     <div className="mt-0.5">
                       <StatusBadge status={activeLease.status} />
                     </div>
@@ -294,7 +377,7 @@ const TenantPortalPage = () => {
                 </div>
                 <div>
                   <p className="font-semibold text-sm text-slate-800">Submit Request</p>
-                  <p className="text-xs text-slate-400">Report an issue</p>
+                  <p className="text-xs text-slate-500">Report an issue</p>
                 </div>
               </button>
               <button onClick={() => setActiveTab('messages')} className="card flex items-center gap-3 hover:border-brand-300 transition-colors cursor-pointer text-left">
@@ -303,7 +386,7 @@ const TenantPortalPage = () => {
                 </div>
                 <div>
                   <p className="font-semibold text-sm text-slate-800">Message</p>
-                  <p className="text-xs text-slate-400">Contact landlord</p>
+                  <p className="text-xs text-slate-500">Contact landlord</p>
                 </div>
               </button>
             </div>
@@ -318,7 +401,7 @@ const TenantPortalPage = () => {
                 <div key={p.id} className="flex items-center justify-between py-2.5 border-b border-slate-50 last:border-0">
                   <div>
                     <p className="text-sm font-medium text-slate-800">{formatCurrency(p.amount)}</p>
-                    <p className="text-xs text-slate-400">Due {formatDate(p.dueDate)}</p>
+                    <p className="text-xs text-slate-500">Due {formatDate(p.dueDate)}</p>
                   </div>
                   <PaymentStatusBadge status={p.status} />
                 </div>
@@ -345,7 +428,7 @@ const TenantPortalPage = () => {
               <div className="card py-12 text-center">
                 <Wrench size={28} className="mx-auto text-slate-300 mb-3" />
                 <p className="text-slate-500 font-medium">No maintenance requests</p>
-                <p className="text-slate-400 text-sm mt-1">Submit a request when you have an issue</p>
+                <p className="text-slate-500 text-sm mt-1">Submit a request when you have an issue</p>
               </div>
             ) : (
               maintenanceRequests.map((req) => (
@@ -372,7 +455,7 @@ const TenantPortalPage = () => {
                           ))}
                         </div>
                       )}
-                      <p className="text-xs text-slate-400 mt-2">Submitted {formatRelative(req.createdAt)}</p>
+                      <p className="text-xs text-slate-500 mt-2">Submitted {formatRelative(req.createdAt)}</p>
                     </div>
                   </div>
                 </div>
@@ -389,7 +472,7 @@ const TenantPortalPage = () => {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-surface-50" style={{ height: '370px' }}>
               {(!threadData?.messages || threadData.messages.length === 0) ? (
-                <p className="text-sm text-slate-400 text-center py-8">No messages yet. Send a message to your landlord.</p>
+                <p className="text-sm text-slate-500 text-center py-8">No messages yet. Send a message to your landlord.</p>
               ) : (
                 (threadData?.messages || []).map((msg) => {
                   const isOwn = msg.sender?.id === user?.id;
@@ -403,7 +486,7 @@ const TenantPortalPage = () => {
                         <div className={`px-3.5 py-2.5 rounded-2xl text-sm ${isOwn ? 'bg-brand-500 text-white rounded-tr-sm' : 'bg-white border border-slate-200 text-slate-800 shadow-card rounded-tl-sm'}`}>
                           {msg.body}
                         </div>
-                        <p className="text-xs text-slate-400 mt-1">{formatRelative(msg.createdAt)}</p>
+                        <p className="text-xs text-slate-500 mt-1">{formatRelative(msg.createdAt)}</p>
                       </div>
                     </div>
                   );
@@ -437,7 +520,7 @@ const TenantPortalPage = () => {
               <div className="card py-12 text-center">
                 <Bell size={28} className="mx-auto text-slate-300 mb-3" />
                 <p className="text-slate-500 font-medium">No notices</p>
-                <p className="text-slate-400 text-sm mt-1">You have no notices from your landlord</p>
+                <p className="text-slate-500 text-sm mt-1">You have no notices from your landlord</p>
               </div>
             ) : (
               notices.map((notice) => (
@@ -446,9 +529,11 @@ const TenantPortalPage = () => {
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-semibold text-slate-800">{notice.title}</h3>
-                        <StatusBadge status={notice.status} />
+                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${noticeStatus(notice.status).badge}`}>
+                          {noticeStatus(notice.status).label}
+                        </span>
                       </div>
-                      {notice.sentAt && <p className="text-xs text-slate-400 mt-1">Received {formatDate(notice.sentAt)}</p>}
+                      {notice.sentAt && <p className="text-xs text-slate-500 mt-1">Recorded {formatDate(notice.sentAt)}</p>}
                     </div>
                   </div>
                   <div className="mt-3 bg-surface-50 border border-slate-100 rounded-xl p-4">
@@ -503,7 +588,7 @@ const TenantPortalPage = () => {
                 </label>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-1.5">Add up to 8 photos to help explain the issue (max 10MB each).</p>
+            <p className="text-xs text-slate-500 mt-1.5">Add up to 8 photos to help explain the issue (max 10MB each).</p>
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" className="btn-secondary" onClick={closeMaintModal}>Cancel</button>
@@ -546,7 +631,7 @@ const PaymentsTab = ({ payments, loading }) => {
       {loading ? (
         <div className="p-8 flex justify-center"><LoadingSpinner /></div>
       ) : payments.length === 0 ? (
-        <div className="px-6 py-12 text-center text-slate-400 text-sm">No payment records yet.</div>
+        <div className="px-6 py-12 text-center text-slate-500 text-sm">No payment records yet.</div>
       ) : (
         <div className="divide-y divide-slate-50">
           {payments.map((p) => {
@@ -558,7 +643,7 @@ const PaymentsTab = ({ payments, loading }) => {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-slate-800">{formatCurrency(p.amount)}</p>
-                  <p className="text-xs text-slate-400">{p.lease?.unit?.name} · Due {formatDate(p.dueDate)}</p>
+                  <p className="text-xs text-slate-500">{p.lease?.unit?.name} · Due {formatDate(p.dueDate)}</p>
                   {p.stripePaymentIntentId && (
                     <p className="text-xs text-slate-300 mt-0.5 font-mono truncate">ref: {p.stripePaymentIntentId.slice(-8)}</p>
                   )}
@@ -566,7 +651,7 @@ const PaymentsTab = ({ payments, loading }) => {
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <div className="text-right">
                     <PaymentStatusBadge status={p.status} />
-                    {p.paidDate && <p className="text-xs text-slate-400 mt-0.5">Paid {formatDate(p.paidDate)}</p>}
+                    {p.paidDate && <p className="text-xs text-slate-500 mt-0.5">Paid {formatDate(p.paidDate)}</p>}
                   </div>
                   {unpaid && (
                     <button

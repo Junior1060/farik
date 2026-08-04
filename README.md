@@ -221,14 +221,20 @@ After running `npm run db:seed` you get:
 
 - 1 landlord (Marcus Reynolds, Reynolds Property Group)
 - 7 tenants with realistic names, emails, phones
-- 2 properties in Austin, TX
-- 8 units (Apt 1A, Apt 2B, Apt 3C, Unit 5, Unit 6, Suite 12, etc.)
-- Active and expired leases
+- 2 properties in Saskatchewan (Maple Court Apartments, Saskatoon · Sunset Ridge Complex, Regina)
+- 9 units (Apt 1A, Apt 2B, Apt 3C, Unit 5, Unit 6, Suite 12, etc.)
+- Active and expired leases — no two active leases share a unit
 - Payment history with mixed statuses (paid, pending, overdue, partial)
 - 3 message conversations with threads
 - 6 maintenance requests across priorities and statuses
-- 3 notices (2 sent, 1 draft)
+- 3 notices (2 recorded as sent, 1 draft)
 - 7 activity log entries
+
+The fixture lives in `backend/prisma/seedData.js` as a pure `buildSeedData(now)`
+function — no Prisma, no env, no I/O — so every date derives from the current
+date rather than being frozen into the file, and the dataset can be asserted on
+without a database (`backend/tests/unit/seedData.test.js`). `prisma/seed.js` is
+the only thing that turns it into rows.
 
 ---
 

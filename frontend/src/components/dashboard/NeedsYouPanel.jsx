@@ -163,10 +163,10 @@ export default function NeedsYouPanel() {
           </span>
         </div>
         <button
-          onClick={() => navigate('/agent')}
+          onClick={() => navigate('/autopilot?tab=approvals')}
           className="text-xs text-brand-600 hover:text-brand-700 font-medium"
         >
-          View all in AI Manager
+          View all in Autopilot
         </button>
       </div>
 
@@ -176,10 +176,10 @@ export default function NeedsYouPanel() {
         ))}
         {sorted.length > 3 && (
           <button
-            onClick={() => navigate('/agent')}
+            onClick={() => navigate('/autopilot?tab=approvals')}
             className="w-full text-xs text-slate-500 hover:text-brand-600 font-medium py-2 text-center"
           >
-            +{sorted.length - 3} more — view all in AI Manager
+            +{sorted.length - 3} more — view all in Autopilot
           </button>
         )}
       </div>

@@ -52,8 +52,8 @@ export default function PolicyOverrideTable({ domain }) {
     }
   };
 
-  if (loading) return <p className="text-xs text-slate-400 py-4">Loading properties…</p>;
-  if (properties.length === 0) return <p className="text-xs text-slate-400 py-4">Add a property to configure per-property overrides.</p>;
+  if (loading) return <p className="text-xs text-slate-500 py-4">Loading properties…</p>;
+  if (properties.length === 0) return <p className="text-xs text-slate-500 py-4">Add a property to configure per-property overrides.</p>;
 
   return (
     <div className="space-y-2">
@@ -64,12 +64,13 @@ export default function PolicyOverrideTable({ domain }) {
           <div key={property.id} className="flex items-center justify-between gap-3 p-3 border border-slate-100 rounded-xl">
             <div className="min-w-0">
               <p className="text-sm font-medium text-slate-700 truncate">{property.name}</p>
-              <p className="text-xs text-slate-400">
-                {isOverride ? 'Property override' : 'Inherits org default'}
+              <p className="text-xs text-slate-500">
+                {isOverride ? 'Property override' : 'Inherits account default'}
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <select
+                aria-label={`Trust level for ${property.name}`}
                 className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
                 value={policy?.trustLevel || ''}
                 disabled={savingId === property.id}
@@ -80,12 +81,13 @@ export default function PolicyOverrideTable({ domain }) {
               {isOverride && (
                 <button
                   type="button"
-                  title="Revert to org default"
+                  aria-label={`Revert ${property.name} to the account default`}
+                  title="Revert to account default"
                   disabled={savingId === property.id}
                   onClick={() => handleReset(property.id)}
-                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+                  className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
                 >
-                  <RotateCcw size={14} />
+                  <RotateCcw size={14} aria-hidden="true" />
                 </button>
               )}
             </div>

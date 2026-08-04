@@ -14,8 +14,7 @@ const pageTitles = {
   '/notices': 'Notices',
   '/maintenance': 'Maintenance',
   '/import': 'Import',
-  '/agent': 'AI Manager',
-  '/timeline': 'Autopilot Timeline',
+  '/autopilot': 'Autopilot',
   '/profile': 'Profile',
 };
 
@@ -58,9 +57,10 @@ const TopNav = ({ onMenuClick }) => {
       <div className="flex items-center gap-3">
         <button
           onClick={onMenuClick}
+          aria-label="Open navigation menu"
           className="lg:hidden p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
         >
-          <Menu size={20} />
+          <Menu size={20} aria-hidden="true" />
         </button>
         <h1 className="text-base font-semibold text-slate-900 tracking-tight">{title}</h1>
       </div>
@@ -89,9 +89,15 @@ const TopNav = ({ onMenuClick }) => {
         <div ref={bellRef} className="relative">
           <button
             onClick={handleBellOpen}
+            aria-expanded={bellOpen}
+            aria-label={
+              autopilot?.unreadCount > 0
+                ? `Notifications, ${autopilot.unreadCount} unread`
+                : 'Notifications'
+            }
             className="relative p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
           >
-            <Bell size={18} />
+            <Bell size={18} aria-hidden="true" />
             {autopilot?.unreadCount > 0 && (
               <span className="absolute top-1 right-1 min-w-[16px] h-4 bg-indigo-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center px-1">
                 {autopilot.unreadCount > 9 ? '9+' : autopilot.unreadCount}
@@ -104,7 +110,7 @@ const TopNav = ({ onMenuClick }) => {
               <div className="flex items-center justify-between px-4 py-3.5 border-b border-slate-100">
                 <span className="text-sm font-semibold text-slate-900">Notifications</span>
                 <button
-                  onClick={() => { setBellOpen(false); navigate('/agent'); }}
+                  onClick={() => { setBellOpen(false); navigate('/autopilot?tab=approvals'); }}
                   className="text-xs text-indigo-600 hover:text-indigo-700 font-medium"
                 >
                   View all
@@ -122,7 +128,7 @@ const TopNav = ({ onMenuClick }) => {
                   {notifications.slice(0, 8).map((n) => (
                     <button
                       key={n.id}
-                      onClick={() => { setBellOpen(false); navigate('/agent'); }}
+                      onClick={() => { setBellOpen(false); navigate('/autopilot?tab=approvals'); }}
                       className="w-full flex items-start gap-3 px-4 py-3 hover:bg-slate-50 text-left transition-colors"
                     >
                       <div className={`w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${
@@ -148,7 +154,7 @@ const TopNav = ({ onMenuClick }) => {
               {autopilot?.escalatedCount > 0 && (
                 <div className="px-4 py-3 border-t border-slate-100 bg-amber-50">
                   <button
-                    onClick={() => { setBellOpen(false); navigate('/agent'); }}
+                    onClick={() => { setBellOpen(false); navigate('/autopilot?tab=approvals'); }}
                     className="w-full flex items-center justify-between text-xs font-semibold text-amber-700 hover:text-amber-800"
                   >
                     <span>

@@ -1,4 +1,4 @@
-const mockPrisma = {
+ const mockPrisma = {
   lease: { findFirst: jest.fn() },
   payment: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn(), findMany: jest.fn() },
 };

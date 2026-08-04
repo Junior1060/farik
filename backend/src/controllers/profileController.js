@@ -76,4 +76,21 @@ const changePassword = async (req, res, next) => {
   }
 };
 
-module.exports = { getProfile, updateProfile, changePassword };
+// GET /api/profile/messaging — the number tenants can text, or null.
+//
+// Deliberately gated on SMS_PROVIDER === 'twilio', not merely on the number
+// being present: services/sms/smsProvider.js only loads the Twilio adapter
+// under that flag, so a stray TWILIO_FROM_NUMBER would otherwise advertise a
+// number that receives nothing. Never falls back to a placeholder — null is the
+// only representation of "not configured", and clients must render it as such.
+const getMessagingConfig = async (req, res, next) => {
+  try {
+    const usingTwilio = process.env.SMS_PROVIDER === 'twilio';
+    const number = (usingTwilio && process.env.TWILIO_FROM_NUMBER) || null;
+    res.json({ messagingNumber: number, provider: number ? 'twilio' : null });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { getProfile, updateProfile, changePassword, getMessagingConfig };

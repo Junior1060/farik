@@ -1,7 +1,9 @@
 import { format, formatDistanceToNow, differenceInDays } from 'date-fns';
 
+// Farik is a Saskatchewan product and Stripe checkout already charges in CAD
+// (see backend/src/controllers/stripeController.js), so amounts render as CAD.
 export const formatCurrency = (amount) =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 }).format(amount);
+  new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0 }).format(amount);
 
 export const formatDate = (date) => format(new Date(date), 'MMM d, yyyy');
 

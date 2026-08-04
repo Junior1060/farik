@@ -20,8 +20,7 @@ import TenantPortalPage from './pages/TenantPortalPage';
 import PropertiesPage from './pages/PropertiesPage';
 import ProfilePage from './pages/ProfilePage';
 import PaymentSuccessPage from './pages/PaymentSuccessPage';
-import AgentPage from './pages/AgentPage';
-import AutopilotTimelinePage from './pages/AutopilotTimelinePage';
+import AutopilotPage from './pages/AutopilotPage';
 import ImportPage from './pages/ImportPage';
 import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
@@ -69,8 +68,12 @@ export default function App() {
         <Route path="/notices" element={<NoticesPage />} />
         <Route path="/maintenance" element={<MaintenancePage />} />
         <Route path="/maintenance/:id" element={<MaintenanceDetailPage />} />
-        <Route path="/agent" element={<AgentPage />} />
-        <Route path="/timeline" element={<AutopilotTimelinePage />} />
+        <Route path="/autopilot" element={<AutopilotPage />} />
+        {/* Legacy paths — "AI Manager" and "Autopilot" merged into one page.
+            Kept inside the protected group so a logged-out hit still lands on
+            /login in a single redirect, exactly as before. */}
+        <Route path="/agent" element={<Navigate to="/autopilot" replace />} />
+        <Route path="/timeline" element={<Navigate to="/autopilot?tab=activity" replace />} />
         <Route path="/import" element={<ImportPage />} />
       </Route>
 

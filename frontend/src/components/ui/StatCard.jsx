@@ -19,7 +19,7 @@ const StatCard = ({
       <div className="flex-1 min-w-0">
         <p className="text-xs font-medium text-slate-500 uppercase tracking-wide truncate">{title}</p>
         <p className="text-lg sm:text-2xl font-bold text-slate-900 mt-0.5 leading-none truncate" title={typeof value === 'string' || typeof value === 'number' ? String(value) : undefined}>{value}</p>
-        {subtitle && <p className="text-xs text-slate-400 mt-1.5">{subtitle}</p>}
+        {subtitle && <p className="text-xs text-slate-500 mt-1.5">{subtitle}</p>}
         {trend && (
           <div className={`inline-flex items-center gap-1 mt-2 text-xs font-semibold px-2 py-0.5 rounded-lg ${
             trend.up ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'

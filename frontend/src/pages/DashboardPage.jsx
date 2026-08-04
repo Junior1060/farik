@@ -91,7 +91,7 @@ function AutopilotStatusBar() {
 
       {(autopilot.status === 'yellow' || autopilot.status === 'red') && (
         <button
-          onClick={() => navigate('/agent')}
+          onClick={() => navigate('/autopilot?tab=approvals')}
           className={`flex items-center gap-1.5 text-xs font-semibold flex-shrink-0 ${cfg.text} hover:underline`}
         >
           Review <ArrowRight size={12} />
@@ -168,10 +168,10 @@ function ActivityFeedPanel() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Zap size={15} className="text-brand-500" />
-          <h3 className="section-title">AI Activity</h3>
+          <h3 className="section-title">Autopilot Activity</h3>
         </div>
         <button
-          onClick={() => navigate('/agent')}
+          onClick={() => navigate('/autopilot')}
           className="text-xs text-brand-600 hover:text-brand-700 font-medium flex items-center gap-1"
         >
           View all <ChevronRight size={12} />

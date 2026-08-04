@@ -44,6 +44,7 @@ export default function TrustLevelSelector({ value, onChange, disabled }) {
             key={level}
             type="button"
             disabled={disabled}
+            aria-pressed={selected}
             onClick={() => onChange(level)}
             className={`flex items-start gap-3 text-left p-3 rounded-xl border transition-colors disabled:opacity-50 ${
               selected
@@ -51,9 +52,12 @@ export default function TrustLevelSelector({ value, onChange, disabled }) {
                 : 'border-slate-200 hover:bg-slate-50'
             }`}
           >
-            <Icon size={18} className={`flex-shrink-0 mt-0.5 ${selected ? 'text-brand-600' : 'text-slate-400'}`} />
+            <Icon size={18} aria-hidden="true" className={`flex-shrink-0 mt-0.5 ${selected ? 'text-brand-600' : 'text-slate-500'}`} />
             <div>
-              <p className={`text-sm font-semibold ${selected ? 'text-brand-700' : 'text-slate-700'}`}>{label}</p>
+              <p className={`text-sm font-semibold ${selected ? 'text-brand-700' : 'text-slate-700'}`}>
+                {label}
+                {selected && <span className="sr-only"> (selected)</span>}
+              </p>
               <p className="text-xs text-slate-500 mt-0.5">{description}</p>
             </div>
           </button>

@@ -2,7 +2,7 @@ import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FileText, CreditCard, MessageSquare,
-  Bell, Wrench, LogOut, X, Building2, Bot, GitBranch, Upload,
+  Bell, Wrench, LogOut, X, Building2, Bot, Upload,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useAutopilot } from '../../context/AutopilotContext';
@@ -17,8 +17,7 @@ const navItems = [
   { to: '/messages', icon: MessageSquare, label: 'Messages' },
   { to: '/notices', icon: Bell, label: 'Notices' },
   { to: '/maintenance', icon: Wrench, label: 'Maintenance' },
-  { to: '/agent', icon: Bot, label: 'AI Manager' },
-  { to: '/timeline', icon: GitBranch, label: 'Autopilot' },
+  { to: '/autopilot', icon: Bot, label: 'Autopilot' },
   { to: '/import', icon: Upload, label: 'Import' },
 ];
 
@@ -59,17 +58,17 @@ const Sidebar = ({ open, onClose }) => {
           </div>
           <button
             onClick={onClose}
-            className="lg:hidden text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+            aria-label="Close navigation menu"
+            className="lg:hidden text-slate-500 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
           >
-            <X size={17} />
+            <X size={17} aria-hidden="true" />
           </button>
         </div>
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           {navItems.map(({ to, icon: Icon, label }) => {
-            const isAgent = to === '/agent';
-            const badgeCount = isAgent ? (autopilot?.escalatedCount || 0) : 0;
+            const badgeCount = to === '/autopilot' ? (autopilot?.escalatedCount || 0) : 0;
             return (
               <NavLink
                 key={to}

@@ -60,9 +60,13 @@ them:
 
 ## Configuring policies
 
-Landlord-facing UI: `AgentPage.jsx` → **Policies** tab. `TrustLevelSelector`
-sets the org-wide default per domain; `PolicyOverrideTable` sets/clears a
-per-property override. Backend: `GET/PUT /api/policies` (org-level),
+Landlord-facing UI: `/autopilot` → **Rules** tab
+(`components/autopilot/RulesPanel.jsx`). `TrustLevelSelector` sets the org-wide
+default per domain; `PolicyOverrideTable` sets/clears a per-property override.
+The individual settings keys are mapped to their controls in
+`components/autopilot/ruleMap.js`, which also records whether each key is
+actually read by workflow code today — rules that are only stored are rendered
+in a separate "not yet enforced" section rather than implied to work. Backend: `GET/PUT /api/policies` (org-level),
 `GET/PUT/DELETE /api/policies/properties/:propertyId/:domain` (property-level),
 all `authenticate + requireLandlord`, validated with zod
 (`backend/src/controllers/policyController.js`).

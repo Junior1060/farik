@@ -1,6 +1,10 @@
 const { z } = require('zod');
 const prisma = require('../lib/prisma');
 
+// DRAFT | SENT are the only statuses the application can honestly reach.
+// SCHEDULED / DELIVERED / FAILED are deliberately NOT accepted: nothing
+// schedules notices, nothing transmits them, and there is no delivery receipt
+// anywhere in the system, so those values could only ever be a lie.
 const noticeSchema = z.object({
   tenantId: z.string(),
   leaseId: z.string().optional(),
@@ -84,6 +88,15 @@ const update = async (req, res, next) => {
     if (!existing) return res.status(404).json({ error: 'Notice not found' });
 
     const data = noticeSchema.partial().parse(req.body);
+
+    // A notice that has been recorded as sent is a historical record: it cannot
+    // be re-stamped, reverted to a draft, or have its wording rewritten.
+    if (existing.status === 'SENT') {
+      return res.status(409).json({
+        error: 'A notice that has been recorded as sent cannot be changed.',
+      });
+    }
+
     const updateData = {};
     if (data.title) updateData.title = data.title;
     if (data.body) updateData.body = data.body;

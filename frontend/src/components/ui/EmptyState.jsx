@@ -8,7 +8,7 @@ const EmptyState = ({ icon: Icon = Inbox, title = 'Nothing here yet', descriptio
     </div>
     <p className="text-slate-800 font-semibold text-base">{title}</p>
     {description && (
-      <p className="text-slate-400 text-sm mt-1.5 max-w-sm leading-relaxed">{description}</p>
+      <p className="text-slate-500 text-sm mt-1.5 max-w-sm leading-relaxed">{description}</p>
     )}
     {action && <div className="mt-5">{action}</div>}
   </div>
