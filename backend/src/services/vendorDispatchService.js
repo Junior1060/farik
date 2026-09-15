@@ -121,11 +121,29 @@ async function handleVendorResponse(workflowId, vendorId, accepted) {
   }
 
   if (accepted) {
-    return workflowEngine.transition({
+    await workflowEngine.transition({
       landlordId, workflowType: 'MAINTENANCE', workflowId,
       fromState: workflow.state, toState: 'VENDOR_CONFIRMED', transitions: TRANSITIONS,
       actorType: 'VENDOR', actorId: vendorId, reason: 'Vendor accepted the job', persist: workflowEngine.maintenancePersist(workflowId),
     });
+
+    // VENDOR_CONFIRMED was previously terminal in practice: proposeAppointment had no
+    // callers anywhere, so no Appointment row could ever exist and scheduling never
+    // began. Open scheduling here — the vendor has genuinely committed, so the row is
+    // real; it simply carries no times until availability comes back.
+    //
+    // Required lazily for the same reason as in maintenanceWorkflow: appointmentService
+    // reads TRANSITIONS from that module at load time, and this module is part of that
+    // cycle. Scheduling failures must not undo the acceptance we just recorded, so they
+    // are logged rather than thrown.
+    try {
+      const appointmentService = require('./appointmentService');
+      await appointmentService.proposeAppointment(workflowId, vendorId);
+    } catch (err) {
+      console.error('[VendorDispatch] Could not open scheduling after vendor acceptance:', err.message);
+    }
+
+    return prisma.maintenanceWorkflow.findUnique({ where: { id: workflowId } });
   }
 
   await workflowEngine.transition({

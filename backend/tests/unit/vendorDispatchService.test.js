@@ -1,7 +1,9 @@
 const mockPrisma = {
   maintenanceWorkflow: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
-  maintenanceRequest: { findUnique: jest.fn() },
-  vendor: { findMany: jest.fn() },
+  maintenanceRequest: { findUnique: jest.fn(), updateMany: jest.fn() },
+  tenantProfile: { findUnique: jest.fn() },
+  vendor: { findMany: jest.fn(), findUnique: jest.fn() },
+  appointment: { create: jest.fn() },
   vendorContactAttempt: { findMany: jest.fn(), create: jest.fn(), count: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
   workflowEvent: { create: jest.fn() },
   smsMessage: { create: jest.fn() },
@@ -48,6 +50,10 @@ beforeEach(() => {
   mockPrisma.vendorContactAttempt.create.mockResolvedValue({ id: 'attempt-1' });
   mockPrisma.agentPolicyOverride.findUnique.mockResolvedValue(null);
   mockPrisma.agentPolicyDefault.findUnique.mockResolvedValue({ trustLevel: 'OPERATE_WITHIN_POLICY', settings: { maxVendorRetries: 2 } });
+  mockPrisma.appointment.create.mockResolvedValue({ id: 'appt-1' });
+  mockPrisma.vendor.findUnique.mockResolvedValue({ id: 'v1', name: 'Bob Plumbing', phone: '555-9999' });
+  mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: null }); // optOutGuard lookup
+  mockPrisma.maintenanceRequest.updateMany.mockResolvedValue({ count: 1 });
 });
 
 afterEach(() => jest.clearAllMocks());
@@ -107,7 +113,7 @@ describe('dispatchNextVendor', () => {
 });
 
 describe('handleVendorResponse', () => {
-  it('moves to VENDOR_CONFIRMED when the vendor accepts', async () => {
+  it('moves to VENDOR_CONFIRMED and opens scheduling when the vendor accepts', async () => {
     statefulWorkflow({ id: 'wf-1', maintenanceRequestId: 'req-1', state: 'VENDOR_CONTACT_ATTEMPTED', category: 'PLUMBING_LEAK' });
     mockPrisma.vendorContactAttempt.findFirst.mockResolvedValue({ id: 'attempt-1' });
 
@@ -116,8 +122,37 @@ describe('handleVendorResponse', () => {
     expect(mockPrisma.vendorContactAttempt.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'ACCEPTED' }) }),
     );
+    // Acceptance must not be terminal — scheduling opens off the back of it.
+    const toStates = mockPrisma.workflowEvent.create.mock.calls.map((c) => c[0].data.toState);
+    expect(toStates).toEqual(['VENDOR_CONFIRMED', 'APPOINTMENT_PROPOSED']);
+
+    // A real Appointment row, tied to this vendor, with no invented times.
+    expect(mockPrisma.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ maintenanceRequestId: 'req-1', vendorId: 'v1', proposedTimes: null, status: 'PROPOSED' }),
+      }),
+    );
+
+    // The vendor is asked for availability; the tenant is told a vendor is confirmed.
+    const outbound = mockPrisma.smsMessage.create.mock.calls.map((c) => c[0].data);
+    expect(outbound.find((m) => m.phoneNumber === '555-9999').body).toMatch(/two time windows/i);
+    expect(outbound.find((m) => m.phoneNumber === '+15551234567').body).toMatch(/accepted your repair/i);
+  });
+
+  it('keeps the vendor acceptance recorded even if opening scheduling fails', async () => {
+    statefulWorkflow({ id: 'wf-1', maintenanceRequestId: 'req-1', state: 'VENDOR_CONTACT_ATTEMPTED', category: 'PLUMBING_LEAK' });
+    mockPrisma.vendorContactAttempt.findFirst.mockResolvedValue({ id: 'attempt-1' });
+    mockPrisma.appointment.create.mockRejectedValue(new Error('db down'));
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(vendorDispatchService.handleVendorResponse('wf-1', 'v1', true)).resolves.toBeTruthy();
+
+    expect(mockPrisma.vendorContactAttempt.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'ACCEPTED' }) }),
+    );
     const toStates = mockPrisma.workflowEvent.create.mock.calls.map((c) => c[0].data.toState);
     expect(toStates).toEqual(['VENDOR_CONFIRMED']);
+    console.error.mockRestore();
   });
 
   it('retries with the next vendor when this one declines and retries remain', async () => {

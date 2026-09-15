@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CreditCard, Plus, Edit2, CheckCircle, DollarSign, Clock, AlertCircle } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import SearchFilterBar from '../components/ui/SearchFilterBar';
@@ -111,8 +112,15 @@ const PaymentsPage = () => {
 
       {error && <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
 
-      {filtered.length === 0 ? (
-        <EmptyState icon={CreditCard} title="No payments found" description="No payments match your current filters." />
+      {payments.length === 0 ? (
+        <EmptyState
+          icon={CreditCard}
+          title="No payments yet"
+          description="Payments will appear here once your tenants and leases are set up."
+          action={<Link to="/tenants" className="btn-primary">Add a tenant</Link>}
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={CreditCard} title="No payments match your filters" description="Try a different status or search term." />
       ) : (
         <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto">

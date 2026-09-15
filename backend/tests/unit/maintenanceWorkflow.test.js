@@ -1,9 +1,12 @@
 const mockPrisma = {
-  maintenanceRequest: { findUnique: jest.fn(), update: jest.fn() },
+  maintenanceRequest: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   maintenanceWorkflow: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   tenantProfile: { findUnique: jest.fn() },
   workflowEvent: { create: jest.fn() },
   smsMessage: { create: jest.fn() },
+  vendor: { findMany: jest.fn(), findUnique: jest.fn() },
+  vendorContactAttempt: { findMany: jest.fn(), create: jest.fn(), count: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
+  appointment: { create: jest.fn() },
   landlordProfile: { findUnique: jest.fn() },
   agentLog: { create: jest.fn() },
   notification: { create: jest.fn() },
@@ -51,6 +54,7 @@ function wireStatefulWorkflow(initial) {
 
 beforeEach(() => {
   mockPrisma.maintenanceRequest.findUnique.mockResolvedValue(baseRequest);
+  mockPrisma.maintenanceRequest.updateMany.mockResolvedValue({ count: 1 }); // status projection
   mockPrisma.landlordProfile.findUnique.mockResolvedValue({ id: 'landlord-1', userId: 'user-1', user: { email: 'l@example.com' } });
   mockPrisma.notification.create.mockResolvedValue({});
   mockPrisma.agentLog.create.mockResolvedValue({ id: 'log-1' });
@@ -60,6 +64,13 @@ beforeEach(() => {
   // Safe default for tests that don't need full stateful tracking (see wireStatefulWorkflow for those that do).
   mockPrisma.maintenanceWorkflow.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: null }); // not opted out, by default
+  // Auto-approval hands off to vendorDispatchService, so a vendor bench must exist.
+  mockPrisma.vendor.findMany.mockResolvedValue([
+    { id: 'v1', name: 'Bob Plumbing', phone: '555-9999', isPreferred: true, avgResponseMinutes: 10 },
+  ]);
+  mockPrisma.vendorContactAttempt.findMany.mockResolvedValue([]);
+  mockPrisma.vendorContactAttempt.count.mockResolvedValue(0);
+  mockPrisma.vendorContactAttempt.create.mockResolvedValue({ id: 'attempt-1' });
 });
 
 afterEach(() => {
@@ -123,6 +134,46 @@ describe('recordTenantReply -> triageAndProceed', () => {
     // The AI's normalized lowercase category must overwrite the deterministic intake
     // category so vendorDispatchService can later match it against Vendor.specialty.
     expect(getRow().category).toBe('plumbing');
+  });
+
+  it('auto-approval actually dispatches a vendor instead of stopping at APPROVED', async () => {
+    wireStatefulWorkflow(mockWorkflowRow({ state: 'DIAGNOSTIC_QUESTIONS_SENT', category: 'PLUMBING_LEAK' }));
+    aiClient.setMockHandler(() => JSON.stringify({
+      urgency: 'ROUTINE', confidence: 'HIGH', category: 'plumbing', priority: 'MEDIUM',
+      estimatedCostMin: 80, estimatedCostMax: 150, summary: 'Fix leak', reasoning: 'minor leak',
+    }));
+
+    await maintenanceWorkflow.recordTenantReply('wf-1', 'Yes it is actively leaking');
+
+    // A real contact attempt row, and a real SMS to the vendor's number.
+    expect(mockPrisma.vendorContactAttempt.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ vendorId: 'v1', attemptNumber: 1, status: 'SENT' }) }),
+    );
+    expect(mockPrisma.smsMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ phoneNumber: '555-9999', direction: 'OUTBOUND' }) }),
+    );
+    const toStates = mockPrisma.workflowEvent.create.mock.calls.map((c) => c[0].data.toState);
+    expect(toStates).toContain('VENDOR_SELECTION');
+    expect(toStates).toContain('VENDOR_CONTACT_ATTEMPTED');
+    // APPROVED must not be the resting state.
+    expect(toStates[toStates.length - 1]).toBe('VENDOR_CONTACT_ATTEMPTED');
+  });
+
+  it('escalates rather than stalling when auto-approval finds no eligible vendor', async () => {
+    wireStatefulWorkflow(mockWorkflowRow({ state: 'DIAGNOSTIC_QUESTIONS_SENT', category: 'PLUMBING_LEAK' }));
+    mockPrisma.vendor.findMany.mockResolvedValue([]); // no vendor bench
+    aiClient.setMockHandler(() => JSON.stringify({
+      urgency: 'ROUTINE', confidence: 'HIGH', category: 'plumbing', priority: 'MEDIUM',
+      estimatedCostMin: 80, estimatedCostMax: 150, summary: 'Fix leak', reasoning: 'minor leak',
+    }));
+
+    await maintenanceWorkflow.recordTenantReply('wf-1', 'Still leaking');
+
+    const toStates = mockPrisma.workflowEvent.create.mock.calls.map((c) => c[0].data.toState);
+    expect(toStates).toContain('ESCALATED_MANUAL');
+    expect(mockPrisma.agentLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ actionType: 'MAINTENANCE_ESCALATION' }) }),
+    );
   });
 
   it('routes to landlord approval when the estimated cost exceeds the policy spend limit', async () => {

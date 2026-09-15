@@ -12,7 +12,11 @@ import { getMaintenanceRequests, updateMaintenanceRequest } from '../services/ma
 import { assetUrl } from '../services/api';
 import { formatDate, formatRelative, fullName } from '../utils/formatters';
 
-const statusOptions = ['OPEN', 'IN_PROGRESS', 'RESOLVED'];
+const statusOptions = ['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CANCELLED'];
+
+// Closed outcomes. A cancelled repair is finished but was never completed, so it is
+// counted and filtered separately from a resolved one rather than merged with it.
+const CLOSED_STATUSES = ['RESOLVED', 'CANCELLED'];
 
 const MaintenancePage = () => {
   const [search, setSearch] = useState('');
@@ -51,11 +55,12 @@ const MaintenancePage = () => {
       />
 
       {/* Summary row */}
-      <div className="grid grid-cols-3 gap-4 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
         {[
           { label: 'Open', count: openCount, color: 'text-blue-700', bg: 'bg-blue-50 border-blue-200' },
           { label: 'In Progress', count: inProgressCount, color: 'text-violet-700', bg: 'bg-violet-50 border-violet-200' },
           { label: 'Resolved', count: requests.filter((r) => r.status === 'RESOLVED').length, color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200' },
+          { label: 'Cancelled', count: requests.filter((r) => r.status === 'CANCELLED').length, color: 'text-slate-600', bg: 'bg-slate-50 border-slate-200' },
         ].map((s) => (
           <div key={s.label} className={`rounded-xl border px-4 py-3 ${s.bg}`}>
             <p className={`text-2xl font-bold ${s.color}`}>{s.count}</p>
@@ -71,6 +76,7 @@ const MaintenancePage = () => {
             <option value="OPEN">Open</option>
             <option value="IN_PROGRESS">In Progress</option>
             <option value="RESOLVED">Resolved</option>
+            <option value="CANCELLED">Cancelled</option>
           </select>
           <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className="input w-auto">
             <option value="">All Priority</option>
@@ -83,8 +89,14 @@ const MaintenancePage = () => {
 
       {error && <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
 
-      {filtered.length === 0 ? (
-        <EmptyState icon={Wrench} title="No maintenance requests" description="No requests match your current filters." />
+      {requests.length === 0 ? (
+        <EmptyState
+          icon={Wrench}
+          title="No maintenance requests yet"
+          description="Requests your tenants submit show up here with photos, priority, and progress tracking."
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={Wrench} title="No requests match your filters" description="Try a different status or search term." />
       ) : (
         <div className="space-y-3">
           {filtered.map((req) => (
@@ -113,8 +125,8 @@ const MaintenancePage = () => {
                       </p>
                     </div>
 
-                    {/* Status dropdown */}
-                    {req.status !== 'RESOLVED' && (
+                    {/* Status dropdown — hidden once the request is closed either way */}
+                    {!CLOSED_STATUSES.includes(req.status) && (
                       <div className="flex-shrink-0">
                         <select
                           value={req.status}

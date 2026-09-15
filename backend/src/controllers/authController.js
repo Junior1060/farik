@@ -3,36 +3,112 @@ const jwt = require('jsonwebtoken');
 const { z } = require('zod');
 const prisma = require('../lib/prisma');
 
-const registerSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  phone: z.string().optional(),
-  companyName: z.string().optional(),
-  role: z.enum(['LANDLORD', 'TENANT']).default('LANDLORD'),
-});
+const PASSWORD_MIN_LENGTH = 8;
+
+const name = z.string().trim().min(1, 'Please enter your name.').max(80);
+
+// The self-serve signup form asks for one "Full name" field; older callers (and
+// the tenant form) may still send firstName/lastName. Either shape is accepted.
+const registerSchema = z
+  .object({
+    email: z
+      .string({ required_error: 'Please enter your email address.' })
+      .trim()
+      .email('Please enter a valid email address.')
+      .max(200)
+      .transform((s) => s.toLowerCase()),
+    password: z
+      .string({ required_error: 'Please choose a password.' })
+      .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`)
+      .max(128, 'Password is too long.'),
+    fullName: name.max(160).optional(),
+    firstName: name.optional(),
+    lastName: z.string().trim().max(80).optional(),
+    phone: z.string().trim().max(40).optional(),
+    companyName: z.string().trim().max(120).optional(),
+    role: z.enum(['LANDLORD', 'TENANT']).default('LANDLORD'),
+  })
+  .refine((d) => d.fullName || d.firstName, {
+    message: 'Please enter your name.',
+    path: ['fullName'],
+  });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().min(1).max(200),
   password: z.string().min(1),
 });
 
 const generateToken = (userId) =>
   jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 
+/** "Jordan Blake" → { firstName: "Jordan", lastName: "Blake" }; a single word keeps lastName empty. */
+function splitFullName(fullName) {
+  const parts = fullName.trim().split(/\s+/);
+  const firstName = parts.shift();
+  return { firstName, lastName: parts.join(' ') };
+}
+
+const USER_INCLUDE = { landlordProfile: true, tenantProfile: true };
+
+/**
+ * Emails are stored lower-cased for every account created from now on, but
+ * accounts registered before that rule may carry capitals. Try the exact value
+ * first, then fall back to a case-insensitive match so nobody is locked out.
+ */
+async function findUserByEmail(email) {
+  const exact = await prisma.user.findUnique({ where: { email }, include: USER_INCLUDE });
+  if (exact) return exact;
+  return prisma.user.findFirst({
+    where: { email: { equals: email, mode: 'insensitive' } },
+    include: USER_INCLUDE,
+  });
+}
+
+const publicUser = (user) => ({
+  id: user.id,
+  email: user.email,
+  role: user.role,
+  profile: user.role === 'LANDLORD' ? user.landlordProfile : user.tenantProfile,
+});
+
 const register = async (req, res, next) => {
   try {
     const data = registerSchema.parse(req.body);
+    const { firstName, lastName } = data.fullName
+      ? splitFullName(data.fullName)
+      : { firstName: data.firstName, lastName: data.lastName || '' };
 
-    const existing = await prisma.user.findUnique({ where: { email: data.email } });
-    if (existing) return res.status(409).json({ error: 'Email already in use' });
+    const existing = await findUserByEmail(data.email);
+
+    if (existing) {
+      // A landlord may have added this tenant before the tenant ever signed up.
+      // That account carries a random placeholder password and invitePending=true;
+      // the tenant's first sign-up claims it rather than being refused.
+      const claimable = data.role === 'TENANT' && existing.role === 'TENANT' && existing.invitePending;
+      if (!claimable) {
+        return res.status(409).json({ error: 'An account with this email already exists.' });
+      }
+
+      const hashed = await bcrypt.hash(data.password, 10);
+      const user = await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          password: hashed,
+          invitePending: false,
+          tenantProfile: existing.tenantProfile
+            ? { update: { firstName, lastName, phone: data.phone ?? existing.tenantProfile.phone } }
+            : { create: { firstName, lastName, phone: data.phone } },
+        },
+        include: USER_INCLUDE,
+      });
+      return res.status(201).json({ token: generateToken(user.id), user: publicUser(user) });
+    }
 
     const hashed = await bcrypt.hash(data.password, 10);
 
     const profileCreate = data.role === 'LANDLORD'
-      ? { landlordProfile: { create: { firstName: data.firstName, lastName: data.lastName, phone: data.phone, companyName: data.companyName } } }
-      : { tenantProfile: { create: { firstName: data.firstName, lastName: data.lastName, phone: data.phone } } };
+      ? { landlordProfile: { create: { firstName, lastName, phone: data.phone, companyName: data.companyName || null } } }
+      : { tenantProfile: { create: { firstName, lastName, phone: data.phone } } };
 
     const user = await prisma.user.create({
       data: {
@@ -41,20 +117,10 @@ const register = async (req, res, next) => {
         role: data.role,
         ...profileCreate,
       },
-      include: { landlordProfile: true, tenantProfile: true },
+      include: USER_INCLUDE,
     });
 
-    const token = generateToken(user.id);
-    const profile = data.role === 'LANDLORD' ? user.landlordProfile : user.tenantProfile;
-    res.status(201).json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        profile,
-      },
-    });
+    res.status(201).json({ token: generateToken(user.id), user: publicUser(user) });
   } catch (err) {
     next(err);
   }
@@ -64,44 +130,20 @@ const login = async (req, res, next) => {
   try {
     const { email, password } = loginSchema.parse(req.body);
 
-    const user = await prisma.user.findUnique({
-      where: { email },
-      include: { landlordProfile: true, tenantProfile: true },
-    });
-
+    const user = await findUserByEmail(email);
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
-    const token = generateToken(user.id);
-    const profile = user.role === 'LANDLORD' ? user.landlordProfile : user.tenantProfile;
-
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        profile,
-      },
-    });
+    res.json({ token: generateToken(user.id), user: publicUser(user) });
   } catch (err) {
     next(err);
   }
 };
 
 const me = async (req, res) => {
-  const { password, ...safeUser } = req.user;
-  const profile = req.user.role === 'LANDLORD' ? req.user.landlordProfile : req.user.tenantProfile;
-  res.json({
-    user: {
-      id: safeUser.id,
-      email: safeUser.email,
-      role: safeUser.role,
-      profile,
-    },
-  });
+  res.json({ user: publicUser(req.user) });
 };
 
-module.exports = { register, login, me };
+module.exports = { register, login, me, PASSWORD_MIN_LENGTH };

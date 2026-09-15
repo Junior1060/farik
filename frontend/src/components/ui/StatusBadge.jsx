@@ -10,6 +10,9 @@ const variants = {
   OPEN: 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800',
   IN_PROGRESS: 'bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800',
   RESOLVED: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800',
+  // Cancelled is a closed-but-not-completed outcome, so it reads as neutral/grey
+  // rather than borrowing the green that means "the repair was actually done".
+  CANCELLED: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
   // Notice status
   DRAFT: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600',
   SENT: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800',
@@ -23,6 +26,7 @@ const labels = {
   OPEN: 'Open',
   IN_PROGRESS: 'In Progress',
   RESOLVED: 'Resolved',
+  CANCELLED: 'Cancelled',
   DRAFT: 'Draft',
   SENT: 'Sent',
 };

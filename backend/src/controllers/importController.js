@@ -342,7 +342,7 @@ const confirm = async (req, res, next) => {
           if (!user) {
             const tempPw = await bcrypt.hash(Math.random().toString(36).slice(2) + Date.now(), 10);
             user = await prisma.user.create({
-              data: { email: row.tenantEmail.toLowerCase(), password: tempPw, role: 'TENANT' },
+              data: { email: row.tenantEmail.toLowerCase(), password: tempPw, role: 'TENANT', invitePending: true },
             });
           }
 

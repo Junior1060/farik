@@ -31,6 +31,7 @@ enum MaintenanceStatus {
   OPEN
   IN_PROGRESS
   RESOLVED
+  CANCELLED
 }
 
 enum MaintenancePriority {
@@ -171,6 +172,9 @@ model User {
   email     String   @unique
   password  String
   role      Role     @default(TENANT)
+  // True for tenant accounts a landlord created ahead of time (placeholder
+  // password). The tenant's first sign-up with the same email claims the account.
+  invitePending Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -221,6 +225,9 @@ model TenantProfile {
   avatarUrl String?
   smsConsent   Boolean   @default(false)
   smsConsentAt DateTime?
+  // How consent was obtained, for audit: SMS_REPLY_START | SMS_DOUBLE_OPT_IN |
+  // TENANT_PORTAL | LANDLORD_ATTESTED. Null on rows that never granted consent.
+  smsConsentSource String?
   smsOptOutAt  DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -244,6 +251,8 @@ model Property {
   city        String
   state       String
   zip         String
+  // Free-text category chosen during onboarding (e.g. "Single-family home").
+  propertyType String?
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -685,47 +694,3 @@ model UploadedDocument {
   @@map("uploaded_documents")
 }
 
-// ─── Founding Landlord Pilot ──────────────────────────────────────────────────
-// Public marketing-site submissions. Deliberately NOT related to User: an
-// applicant has no account yet, and the row must survive them creating one.
-
-enum PilotApplicationStatus {
-  NEW
-  CONTACTED
-  CALL_BOOKED
-  PILOT_ACCEPTED
-  PILOT_DECLINED
-}
-
-enum PreferredContactMethod {
-  EMAIL
-  PHONE
-  TEXT
-}
-
-model PilotApplication {
-  id                      String                 @id @default(cuid())
-  fullName                String
-  email                   String
-  phone                   String
-  city                    String
-  unitsManaged            Int
-  companyName             String?
-  currentManagementMethod String?
-  biggestProblem          String
-  preferredContactMethod  PreferredContactMethod
-  additionalNotes         String?
-  status                  PilotApplicationStatus @default(NEW)
-  source                  String                 @default("website")
-  internalNotes           String?
-  bookedCallAt            DateTime?
-  bookingReference        String?
-  // Salted hash only — enough to spot abuse patterns, never the raw address.
-  submitterIpHash         String?
-  createdAt               DateTime               @default(now())
-  updatedAt               DateTime               @updatedAt
-
-  @@index([email])
-  @@index([status, createdAt])
-  @@map("pilot_applications")
-}

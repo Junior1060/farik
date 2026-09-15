@@ -2,6 +2,7 @@ const prisma = require('../lib/prisma');
 const workflowEngine = require('./workflowEngine');
 const escalationService = require('./escalationService');
 const { getSmsProvider } = require('./sms/smsProvider');
+const { canReceiveSms } = require('./sms/optOutGuard');
 const { TRANSITIONS } = require('./workflows/maintenanceWorkflow');
 
 async function loadContext(workflowId) {
@@ -15,9 +16,18 @@ async function loadContext(workflowId) {
 }
 
 /**
- * Creates a proposed appointment and asks the tenant to confirm a time + entry permission.
+ * Opens scheduling for a job a vendor has just accepted.
+ *
+ * The Appointment row is real either way — the vendor has genuinely committed to this
+ * job — but the times may not be known yet:
+ *
+ *  - `proposedTimes` supplied: offer them to the tenant to pick from (the eventual
+ *    steady state, once vendor availability is collected and parsed).
+ *  - `proposedTimes` omitted: ask the vendor for two windows and tell the tenant a
+ *    vendor is confirmed while we arrange a time. Nothing is invented — the row simply
+ *    carries no times yet.
  */
-async function proposeAppointment(workflowId, vendorId, proposedTimes) {
+async function proposeAppointment(workflowId, vendorId, proposedTimes = null) {
   const { workflow, request, landlordId } = await loadContext(workflowId);
 
   const appointment = await prisma.appointment.create({
@@ -27,19 +37,55 @@ async function proposeAppointment(workflowId, vendorId, proposedTimes) {
   await workflowEngine.transition({
     landlordId, workflowType: 'MAINTENANCE', workflowId,
     fromState: workflow.state, toState: 'APPOINTMENT_PROPOSED', transitions: TRANSITIONS,
-    actorType: 'AI', reason: 'Proposed appointment times to tenant', persist: workflowEngine.maintenancePersist(workflowId),
+    actorType: 'AI',
+    reason: proposedTimes?.length
+      ? 'Proposed appointment times to tenant'
+      : 'Vendor accepted — requesting availability',
+    persist: workflowEngine.maintenancePersist(workflowId),
   });
 
-  if (request.tenant.phone && request.tenant.smsConsent) {
-    const times = (proposedTimes || []).join(', ');
-    await getSmsProvider().sendSms({
+  await notifyAboutProposal({ request, workflowId, vendorId, proposedTimes });
+
+  return appointment;
+}
+
+/**
+ * Sends the SMS side of a proposal. Split out so the transition above stays the single
+ * source of truth for state, and a messaging failure can never leave the workflow
+ * claiming a proposal that was never transitioned.
+ */
+async function notifyAboutProposal({ request, workflowId, vendorId, proposedTimes }) {
+  const provider = getSmsProvider();
+  const hasTimes = Array.isArray(proposedTimes) && proposedTimes.length > 0;
+
+  if (hasTimes) {
+    if (canReceiveSms(request.tenant)) {
+      const times = proposedTimes.map((t, i) => `${i + 1}. ${t}`).join('\n');
+      await provider.sendSms({
+        to: request.tenant.phone,
+        body: `A vendor is available for "${request.title}":\n${times}\nReply with the number that works, and let us know if it's OK for them to enter if you're not home.`,
+        tenantId: request.tenant.id, relatedWorkflowType: 'MAINTENANCE', relatedWorkflowId: workflowId,
+      });
+    }
+    return;
+  }
+
+  // No times yet: ask the vendor for availability, and keep the tenant informed.
+  const vendor = await prisma.vendor.findUnique({ where: { id: vendorId } });
+  if (vendor?.phone) {
+    await provider.sendSms({
+      to: vendor.phone,
+      body: `Thanks for accepting "${request.title}" at ${request.unit.name}, ${request.unit.property.name}. Reply with two time windows that would work for you.`,
+      relatedWorkflowType: 'MAINTENANCE', relatedWorkflowId: workflowId,
+    });
+  }
+  if (canReceiveSms(request.tenant)) {
+    await provider.sendSms({
       to: request.tenant.phone,
-      body: `A vendor is available: ${times}. Reply with your preferred time, and let us know if it's OK for them to enter if you're not home.`,
+      body: 'Good news — a contractor has accepted your repair. We are arranging a time now and will text you options shortly.',
       tenantId: request.tenant.id, relatedWorkflowType: 'MAINTENANCE', relatedWorkflowId: workflowId,
     });
   }
-
-  return appointment;
 }
 
 async function confirmAppointment(appointmentId, { scheduledStart, scheduledEnd, entryPermissionGranted }) {

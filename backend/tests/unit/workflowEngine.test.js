@@ -1,7 +1,14 @@
-const mockTx = { workflowEvent: { create: jest.fn() }, maintenanceWorkflow: { updateMany: jest.fn() } };
+// maintenancePersist now also projects the new state onto MaintenanceRequest.status,
+// so both the tx client and the base client need the models that sync touches.
+const mockTx = {
+  workflowEvent: { create: jest.fn() },
+  maintenanceWorkflow: { updateMany: jest.fn(), findUnique: jest.fn() },
+  maintenanceRequest: { updateMany: jest.fn() },
+};
 const mockPrisma = {
   workflowEvent: { create: jest.fn(), findMany: jest.fn() },
-  maintenanceWorkflow: { updateMany: jest.fn() },
+  maintenanceWorkflow: { updateMany: jest.fn(), findUnique: jest.fn() },
+  maintenanceRequest: { updateMany: jest.fn() },
   $transaction: jest.fn((fn) => fn(mockTx)),
 };
 jest.mock('../../src/lib/prisma', () => mockPrisma);
@@ -15,6 +22,13 @@ const TRANSITIONS = {
   B: ['C', 'A'],
   C: [],
 };
+
+beforeEach(() => {
+  for (const client of [mockPrisma, mockTx]) {
+    client.maintenanceWorkflow.findUnique.mockResolvedValue({ maintenanceRequestId: 'req-1' });
+    client.maintenanceRequest.updateMany.mockResolvedValue({ count: 1 });
+  }
+});
 
 afterEach(() => jest.clearAllMocks());
 

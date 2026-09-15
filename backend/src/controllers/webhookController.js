@@ -44,6 +44,35 @@ async function handleVendorReply(vendor, body) {
 const STOP_KEYWORDS = new Set(['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT']);
 const START_KEYWORDS = new Set(['START', 'UNSTOP', 'YES']);
 
+// Sent verbatim, so an exact match on this constant is a reliable record that a given
+// number has already been asked — no extra table needed to make the prompt one-shot.
+const CONSENT_PROMPT = 'Farik helps your landlord handle repairs. Reply YES to let us text you '
+  + 'about maintenance at this number. Msg & data rates may apply. Reply STOP to opt out at any time.';
+const CONSENT_PROMPT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Asks an identified tenant for SMS consent at most once a week. Returns silently if
+ * they have already consented, already opted out (never re-prompt someone who said
+ * STOP), or were prompted recently.
+ */
+async function maybeRequestConsent(tenant, provider, phoneNumber) {
+  if (tenant.smsConsent || tenant.smsOptOutAt) return;
+
+  const alreadyAsked = await prisma.smsMessage.findFirst({
+    where: {
+      phoneNumber,
+      direction: 'OUTBOUND',
+      body: CONSENT_PROMPT,
+      createdAt: { gte: new Date(Date.now() - CONSENT_PROMPT_COOLDOWN_MS) },
+    },
+  });
+  if (alreadyAsked) return;
+
+  // No tenantId: optOutGuard would be a no-op here anyway (we just checked opt-out),
+  // and this send must not be attributed as consented traffic.
+  await provider.sendSms({ to: phoneNumber, body: CONSENT_PROMPT });
+}
+
 async function handleInboundSms(req, res, next) {
   try {
     // Defense against silent fail-open: the mock SMS provider always reports a valid
@@ -97,9 +126,31 @@ async function handleInboundSms(req, res, next) {
       await provider.sendSms({ to: from, body: 'You have been unsubscribed and will no longer receive texts from Farik. Reply START to resume.', tenantId: tenant.id });
       return res.status(200).json({ received: true });
     }
-    if (START_KEYWORDS.has(keyword) && tenant.smsOptOutAt) {
-      await prisma.tenantProfile.update({ where: { id: tenant.id }, data: { smsOptOutAt: null } });
-      await provider.sendSms({ to: from, body: 'You are resubscribed to Farik texts.', tenantId: tenant.id });
+    // START/YES is an unambiguous opt-in, so it does double duty: it clears a prior
+    // opt-out *and* records consent for a tenant who never had it — which is how the
+    // double opt-in prompt above gets answered. This is the primary writer of
+    // smsConsent; nothing grants it implicitly or by default.
+    if (START_KEYWORDS.has(keyword) && (tenant.smsOptOutAt || !tenant.smsConsent)) {
+      const wasOptedOut = Boolean(tenant.smsOptOutAt);
+      await prisma.tenantProfile.update({
+        where: { id: tenant.id },
+        data: {
+          smsOptOutAt: null,
+          smsConsent: true,
+          // Preserve the original grant metadata for a tenant who is merely resubscribing.
+          ...(tenant.smsConsent ? {} : {
+            smsConsentAt: new Date(),
+            smsConsentSource: wasOptedOut ? 'SMS_REPLY_START' : 'SMS_DOUBLE_OPT_IN',
+          }),
+        },
+      });
+      await provider.sendSms({
+        to: from,
+        body: wasOptedOut
+          ? 'You are resubscribed to Farik texts. Reply STOP to opt out at any time.'
+          : 'Thanks — Farik can now text you about repairs at this number. Reply STOP to opt out at any time.',
+        tenantId: tenant.id,
+      });
       return res.status(200).json({ received: true });
     }
 
@@ -114,6 +165,11 @@ async function handleInboundSms(req, res, next) {
     }
 
     // No open diagnostic workflow — fall back to the existing general message flow.
+    // A tenant mid-diagnostics has necessarily consented already, so only this path
+    // needs to ask. The message is still recorded and handled either way; asking for
+    // consent never swallows what the tenant actually said.
+    await maybeRequestConsent(tenant, provider, from);
+
     let conversation = await prisma.conversation.findFirst({
       where: { participants: { some: { tenantId: tenant.id } } },
       orderBy: { updatedAt: 'desc' },

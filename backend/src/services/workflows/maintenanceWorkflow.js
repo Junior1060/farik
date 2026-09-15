@@ -4,6 +4,7 @@ const policyEngine = require('../policyEngine');
 const escalationService = require('../escalationService');
 const diagnostics = require('../maintenanceDiagnostics');
 const { getSmsProvider } = require('../sms/smsProvider');
+const { canReceiveSms } = require('../sms/optOutGuard');
 const { callAndValidate, AiValidationError } = require('../ai/validate');
 const { maintenanceTriageSchema } = require('../ai/schemas');
 
@@ -11,7 +12,10 @@ const { maintenanceTriageSchema } = require('../ai/schemas');
 // service function yet (appointment reschedule/no-show land in a later phase),
 // but the graph is complete so workflowEngine can validate any future transition.
 const TRANSITIONS = {
-  INTAKE_RECEIVED: ['DIAGNOSTIC_QUESTIONS_SENT', 'EMERGENCY_ESCALATED'],
+  // TRIAGED is reachable straight from intake for a tenant we cannot text: they can
+  // never answer diagnostic questions, so triage runs on the report alone rather
+  // than parking the workflow in DIAGNOSTIC_QUESTIONS_SENT forever.
+  INTAKE_RECEIVED: ['DIAGNOSTIC_QUESTIONS_SENT', 'TRIAGED', 'EMERGENCY_ESCALATED'],
   DIAGNOSTIC_QUESTIONS_SENT: ['DIAGNOSTIC_RESPONSE_RECEIVED', 'EMERGENCY_ESCALATED', 'CANCELLED'],
   DIAGNOSTIC_RESPONSE_RECEIVED: ['TRIAGED', 'EMERGENCY_ESCALATED', 'ESCALATED_MANUAL'],
   TRIAGED: ['AWAITING_LANDLORD_APPROVAL', 'APPROVED', 'ESCALATED_MANUAL'],
@@ -75,6 +79,14 @@ async function startWorkflow(maintenanceRequestId) {
     return prisma.maintenanceWorkflow.findUnique({ where: { id: workflow.id } });
   }
 
+  // No SMS channel to this tenant (no number, no consent, or opted out) and no portal
+  // UI for answering diagnostics — sending questions would strand the workflow waiting
+  // for a reply that can never arrive. Triage on the report alone instead, which is
+  // exactly what the pre-workflow path did, but inside the audited state machine.
+  if (!canReceiveSms(request.tenant)) {
+    return triageAndProceed(workflow.id);
+  }
+
   await sendDiagnosticQuestions(workflow.id, landlordId, request, category);
   return prisma.maintenanceWorkflow.findUnique({ where: { id: workflow.id } });
 }
@@ -91,7 +103,7 @@ async function escalateEmergency(workflowId, landlordId, request, matchedRules) 
     + 'If you or anyone is in immediate danger, call 911 or your local emergency number right away. '
     + 'We have alerted your landlord immediately.';
 
-  if (request.tenant.phone && request.tenant.smsConsent) {
+  if (canReceiveSms(request.tenant)) {
     await getSmsProvider().sendSms({
       to: request.tenant.phone, body: safetyMessage, tenantId: request.tenant.id,
       relatedWorkflowType: 'MAINTENANCE', relatedWorkflowId: workflowId,
@@ -124,7 +136,7 @@ async function sendDiagnosticQuestions(workflowId, landlordId, request, category
     metadata: { questions: questions.map((q) => q.key) }, persist: workflowEngine.maintenancePersist(workflowId),
   });
 
-  if (request.tenant.phone && request.tenant.smsConsent) {
+  if (canReceiveSms(request.tenant)) {
     const body = `Thanks for reporting this. A couple quick questions so we can help fast:\n`
       + questions.map((q, i) => `${i + 1}. ${q.question}`).join('\n');
     await getSmsProvider().sendSms({
@@ -270,6 +282,18 @@ async function triageAndProceed(workflowId) {
       actorType: 'AI', reason: `Within policy: ${policy.trustLevel}, confidence ${result.confidence}, est. $${estimatedMax} <= limit $${maxAutoSpend}`,
       persist: workflowEngine.maintenancePersist(workflowId),
     });
+
+    // Auto-approval used to stop here, leaving the workflow parked in APPROVED forever:
+    // the only caller of dispatchNextVendor was the landlord's manual approve endpoint,
+    // which rejects anything not in AWAITING_LANDLORD_APPROVAL. Approving without
+    // dispatching is not an approval — hand off to the same vendor selection the manual
+    // path uses, so there is exactly one dispatch implementation.
+    //
+    // Required lazily: vendorDispatchService destructures TRANSITIONS from this module at
+    // load time, so a top-level require here would hand it a half-initialised exports
+    // object and every transition would throw. Same pattern as middleware/auth.js.
+    const vendorDispatchService = require('../vendorDispatchService');
+    return vendorDispatchService.dispatchNextVendor(workflowId);
   } else {
     await workflowEngine.transition({
       landlordId, workflowType: 'MAINTENANCE', workflowId,

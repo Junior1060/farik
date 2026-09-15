@@ -13,7 +13,7 @@ const requestSchema = z.object({
 });
 
 const updateSchema = z.object({
-  status: z.enum(['OPEN', 'IN_PROGRESS', 'RESOLVED']).optional(),
+  status: z.enum(['OPEN', 'IN_PROGRESS', 'RESOLVED', 'CANCELLED']).optional(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH']).optional(),
 });
 
@@ -75,18 +75,17 @@ const create = async (req, res, next) => {
       include: { tenant: true, unit: { include: { property: true } } },
     });
 
-    // Route into the full SMS-capable workflow (diagnostics, deterministic emergency
-    // triage, vendor dispatch) only for tenants who've opted into SMS and whose
-    // policy trust level isn't OBSERVE; otherwise keep today's direct triage path
-    // untouched so existing behavior never regresses.
-    const { tenant, unit } = request;
-    if (tenant.phone && tenant.smsConsent) {
-      const policy = await policyEngine.getEffectivePolicy(unit.property.landlordId, unit.property.id, 'MAINTENANCE');
-      if (policy.trustLevel !== 'OBSERVE') {
-        maintenanceWorkflow.startWorkflow(request.id).catch(console.error);
-      } else {
-        agentService.triageMaintenanceRequest(request).catch(console.error);
-      }
+    // SMS consent gates *outbound texts*, not the repair workflow itself. Every send
+    // site checks it independently (maintenanceWorkflow, appointmentService) and
+    // optOutGuard is a central choke point inside both SMS adapters, so a tenant who
+    // hasn't consented simply receives nothing. Gating workflow creation on consent
+    // as well meant no MaintenanceWorkflow was ever created — leaving diagnostics,
+    // triage, vendor dispatch and scheduling unreachable. Branch on policy alone;
+    // startWorkflow decides internally whether the tenant is contactable.
+    const { unit } = request;
+    const policy = await policyEngine.getEffectivePolicy(unit.property.landlordId, unit.property.id, 'MAINTENANCE');
+    if (policy.trustLevel !== 'OBSERVE') {
+      maintenanceWorkflow.startWorkflow(request.id).catch(console.error);
     } else {
       agentService.triageMaintenanceRequest(request).catch(console.error);
     }
@@ -142,7 +141,10 @@ const update = async (req, res, next) => {
     const updateData = {};
     if (data.status) {
       updateData.status = data.status;
+      // Only completion stamps resolvedAt; a cancellation closes the request without
+      // it. Re-opening clears it so a stale completion date can't linger.
       if (data.status === 'RESOLVED') updateData.resolvedAt = new Date();
+      if (data.status === 'OPEN' || data.status === 'IN_PROGRESS') updateData.resolvedAt = null;
     }
     if (data.priority) updateData.priority = data.priority;
 

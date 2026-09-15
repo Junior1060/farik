@@ -7,7 +7,10 @@ const mockPrisma = {
 };
 const mockTx = {
   maintenanceInvoice: { update: jest.fn() },
-  maintenanceWorkflow: { updateMany: jest.fn() },
+  // findUnique + maintenanceRequest.updateMany back the request-status projection that
+  // maintenancePersist performs inside this same transaction.
+  maintenanceWorkflow: { updateMany: jest.fn(), findUnique: jest.fn() },
+  maintenanceRequest: { updateMany: jest.fn() },
   workflowEvent: { create: jest.fn() },
 };
 jest.mock('../../src/lib/prisma', () => mockPrisma);
@@ -25,6 +28,8 @@ const baseRequest = { id: 'req-1', unit: { property: { landlordId: 'landlord-1' 
 
 beforeEach(() => {
   mockTx.maintenanceWorkflow.updateMany.mockResolvedValue({ count: 1 });
+  mockTx.maintenanceWorkflow.findUnique.mockResolvedValue({ maintenanceRequestId: 'req-1' });
+  mockTx.maintenanceRequest.updateMany.mockResolvedValue({ count: 1 });
   mockTx.maintenanceInvoice.update.mockImplementation(({ data }) => Promise.resolve({ id: 'inv-1', ...data }));
 });
 

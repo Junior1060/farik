@@ -12,13 +12,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 globally
+// A 401 from an authenticated call means the session is gone: clear it and go to
+// login. A 401 from the login/register call itself is just wrong credentials —
+// the form shows the message, and reloading the page here would swallow it.
+const isCredentialAttempt = (config) => /\/auth\/(login|register)\/?$/.test(config?.url || '');
+const onAuthPage = () => /^\/(login|signup)(\/|$)/.test(window.location.pathname);
+
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    if (err.response?.status === 401 && !isCredentialAttempt(err.config)) {
       localStorage.removeItem('rentora_token');
-      window.location.href = '/login';
+      if (!onAuthPage()) window.location.href = '/login';
     }
     return Promise.reject(err);
   }

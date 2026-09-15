@@ -4,7 +4,7 @@ import {
   LogOut, Building2, Send, CheckCircle, AlertCircle, Clock, User, Lock,
   ImagePlus, X, Smartphone
 } from 'lucide-react';
-import { updateProfile, changePassword, getMessagingConfig } from '../services/profileService';
+import { updateProfile, changePassword, getMessagingConfig, setSmsConsent } from '../services/profileService';
 import { createCheckoutSession } from '../services/stripeService';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -511,7 +511,7 @@ const TenantPortalPage = () => {
 
         {/* NOTICES TAB */}
         {activeTab === 'profile' && (
-          <TenantProfileTab user={user} profile={profile} />
+          <TenantProfileTab user={user} profile={profile} messagingNumber={messagingNumber} />
         )}
 
         {activeTab === 'notices' && (
@@ -673,7 +673,81 @@ const PaymentsTab = ({ payments, loading }) => {
   );
 };
 
-const TenantProfileTab = ({ user, profile }) => {
+/**
+ * Explicit, self-service SMS opt-in. This is the only way a tenant can turn texting on
+ * for themselves in the app; the alternative is replying YES to Farik by text.
+ * Never pre-checked, and turning it off is recorded as a full opt-out.
+ */
+const SmsConsentCard = ({ profile, messagingNumber }) => {
+  const [granted, setGranted] = useState(Boolean(profile?.smsConsent) && !profile?.smsOptOutAt);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const hasPhone = Boolean(profile?.phone);
+
+  const toggle = async () => {
+    const next = !granted;
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await setSmsConsent(next);
+      setGranted(Boolean(updated.smsConsent) && !updated.smsOptOutAt);
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not update your text message setting.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <h3 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-2">
+        <Smartphone size={14} /> Text messages
+      </h3>
+
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2 mb-3">
+          <AlertCircle size={13} />{error}
+        </div>
+      )}
+
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm text-slate-700">
+            Let Farik text you about repairs{messagingNumber ? ` from ${messagingNumber}` : ''} — follow-up
+            questions, appointment times, and updates on your requests.
+          </p>
+          <p className="text-xs text-slate-500 mt-1.5">
+            Message and data rates may apply. You can turn this off here, or reply STOP to any text.
+          </p>
+          {granted && (
+            <p className="text-xs text-emerald-700 mt-2 flex items-center gap-1.5">
+              <CheckCircle size={12} /> Texting is on for {profile?.phone}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={toggle}
+          disabled={saving || (!granted && !hasPhone)}
+          aria-pressed={granted}
+          className={`flex-shrink-0 px-4 py-2 text-sm font-semibold rounded-xl transition-colors disabled:opacity-50 ${
+            granted ? 'bg-slate-200 text-slate-700 hover:bg-slate-300' : 'bg-brand-500 text-white hover:bg-brand-600'
+          }`}
+        >
+          {saving ? 'Saving…' : granted ? 'Turn off' : 'Turn on'}
+        </button>
+      </div>
+
+      {!hasPhone && !granted && (
+        <InfoBanner variant="info" className="mt-4">
+          Add a mobile number above and save before turning on text messages.
+        </InfoBanner>
+      )}
+    </div>
+  );
+};
+
+const TenantProfileTab = ({ user, profile, messagingNumber }) => {
   const [infoSuccess, setInfoSuccess] = useState('');
   const [infoError, setInfoError] = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
@@ -738,6 +812,8 @@ const TenantProfileTab = ({ user, profile }) => {
           </button>
         </form>
       </div>
+
+      <SmsConsentCard profile={profile} messagingNumber={messagingNumber} />
 
       {/* Password card */}
       <div className="card">

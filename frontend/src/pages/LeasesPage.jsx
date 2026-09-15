@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { FileText, Plus, Edit, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import SearchFilterBar from '../components/ui/SearchFilterBar';
@@ -97,8 +98,15 @@ const LeasesPage = () => {
 
       {error && <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
 
-      {filtered.length === 0 ? (
-        <EmptyState icon={FileText} title="No leases found" description="No leases match your current filters." />
+      {leases.length === 0 ? (
+        <EmptyState
+          icon={FileText}
+          title="No leases yet"
+          description="A lease connects a tenant to a unit. Add a tenant and their lease is created at the same time."
+          action={<Link to="/tenants" className="btn-primary">Add a tenant</Link>}
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={FileText} title="No leases match your filters" description="Try a different status or search term." />
       ) : (
         <div className="grid gap-4">
           {filtered.map((lease) => {
@@ -306,7 +314,7 @@ const CreateLeaseForm = ({ onSuccess, onCancel }) => {
         {lookupError && (
           <div className="flex items-start gap-2 mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
             <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
-            <span>{lookupError} Ask them to sign up at <strong>/register</strong> as a Tenant first.</span>
+            <span>{lookupError} To add someone new, use <Link to="/tenants" className="font-semibold underline">Add tenant</Link> — it creates their account and lease together.</span>
           </div>
         )}
       </div>

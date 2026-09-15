@@ -93,4 +93,32 @@ const getMessagingConfig = async (req, res, next) => {
   }
 };
 
-module.exports = { getProfile, updateProfile, changePassword, getMessagingConfig };
+// PUT /api/profile/sms-consent — a tenant granting or withdrawing SMS consent for
+// themselves. This is the only place consent can be set without a text message, and
+// it is deliberately self-service: a landlord cannot call it on a tenant's behalf.
+//
+// Withdrawal is recorded as an opt-out (not merely smsConsent = false) so it flows
+// through the same optOutGuard choke point that STOP does, and one rule covers both.
+const setSmsConsent = async (req, res, next) => {
+  try {
+    const { granted } = z.object({ granted: z.boolean() }).parse(req.body);
+    const profile = req.user.tenantProfile;
+
+    if (granted && !profile.phone) {
+      return res.status(400).json({ error: 'Add a mobile number to your profile before turning on text messages.' });
+    }
+
+    const updated = await prisma.tenantProfile.update({
+      where: { userId: req.user.id },
+      data: granted
+        ? { smsConsent: true, smsConsentAt: new Date(), smsConsentSource: 'TENANT_PORTAL', smsOptOutAt: null }
+        : { smsConsent: false, smsOptOutAt: new Date() },
+    });
+
+    res.json({ profile: updated });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { getProfile, updateProfile, changePassword, getMessagingConfig, setSmsConsent };

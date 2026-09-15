@@ -9,6 +9,13 @@ jest.mock('../../src/services/workflows/maintenanceWorkflow', () => ({ startWork
 jest.mock('../../src/services/vendorDispatchService', () => ({}));
 
 const maintenanceController = require('../../src/controllers/maintenanceController');
+const policyEngine = require('../../src/services/policyEngine');
+const agentService = require('../../src/services/agentService');
+const maintenanceWorkflow = require('../../src/services/workflows/maintenanceWorkflow');
+
+beforeEach(() => {
+  policyEngine.getEffectivePolicy.mockResolvedValue({ trustLevel: 'OPERATE_WITHIN_POLICY', settings: {} });
+});
 
 function mockReqRes({ params = {}, body = {}, landlordId = 'landlord-1', tenantId = 'tenant-1' } = {}) {
   const req = { params, body, files: [], user: { landlordProfile: { id: landlordId }, tenantProfile: { id: tenantId } } };
@@ -42,6 +49,49 @@ describe('maintenanceController.create — tenant/unit ownership protection', ()
 
     expect(res.statusCode).toBe(201);
     expect(res.body.request.id).toBe('req-1');
+  });
+});
+
+// The workflow used to be gated on tenant.smsConsent, which nothing ever set — so no
+// MaintenanceWorkflow was ever created and triage, dispatch and scheduling were all
+// unreachable. Consent now gates outbound texts only; policy alone decides routing.
+describe('maintenanceController.create — workflow routing does not depend on SMS consent', () => {
+  beforeEach(() => {
+    mockPrisma.lease.findFirst.mockResolvedValue({ id: 'lease-1' });
+  });
+
+  function requestWithTenant(tenant) {
+    return { id: 'req-1', tenant, unit: { property: { landlordId: 'landlord-1', id: 'prop-1' } } };
+  }
+
+  it('starts the workflow for a tenant with no phone and no consent', async () => {
+    mockPrisma.maintenanceRequest.create.mockResolvedValue(requestWithTenant({ phone: null, smsConsent: false }));
+    const { req, res, next } = mockReqRes({ body: { unitId: 'unit-1', title: 'Leak', description: 'Sink leaking' } });
+
+    await maintenanceController.create(req, res, next);
+
+    expect(maintenanceWorkflow.startWorkflow).toHaveBeenCalledWith('req-1');
+    expect(agentService.triageMaintenanceRequest).not.toHaveBeenCalled();
+  });
+
+  it('starts the workflow for a consented tenant', async () => {
+    mockPrisma.maintenanceRequest.create.mockResolvedValue(requestWithTenant({ phone: '+15551234567', smsConsent: true }));
+    const { req, res, next } = mockReqRes({ body: { unitId: 'unit-1', title: 'Leak', description: 'Sink leaking' } });
+
+    await maintenanceController.create(req, res, next);
+
+    expect(maintenanceWorkflow.startWorkflow).toHaveBeenCalledWith('req-1');
+  });
+
+  it('falls back to observe-only triage when the policy trust level is OBSERVE', async () => {
+    policyEngine.getEffectivePolicy.mockResolvedValue({ trustLevel: 'OBSERVE', settings: {} });
+    mockPrisma.maintenanceRequest.create.mockResolvedValue(requestWithTenant({ phone: '+15551234567', smsConsent: true }));
+    const { req, res, next } = mockReqRes({ body: { unitId: 'unit-1', title: 'Leak', description: 'Sink leaking' } });
+
+    await maintenanceController.create(req, res, next);
+
+    expect(maintenanceWorkflow.startWorkflow).not.toHaveBeenCalled();
+    expect(agentService.triageMaintenanceRequest).toHaveBeenCalled();
   });
 });
 

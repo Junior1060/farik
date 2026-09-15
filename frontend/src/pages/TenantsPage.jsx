@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
-import { Users, Plus, Edit, Trash2, Eye, Phone, Mail } from 'lucide-react';
+import { Users, Plus, Edit, Trash2, Eye, Phone, Mail, MessageSquareOff, MessageSquare } from 'lucide-react';
+import AddTenantForm from '../components/tenants/AddTenantForm';
+import { getProperties } from '../services/propertyService';
 import PageHeader from '../components/ui/PageHeader';
 import SearchFilterBar from '../components/ui/SearchFilterBar';
 import PaymentStatusBadge from '../components/ui/PaymentStatusBadge';
@@ -8,14 +10,77 @@ import EmptyState from '../components/ui/EmptyState';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Modal from '../components/ui/Modal';
 import useFetch from '../hooks/useFetch';
-import { getTenants, updateTenant, deleteTenant } from '../services/tenantService';
+import { getTenants, updateTenant, deleteTenant, attestTenantSmsConsent } from '../services/tenantService';
 import { formatDate, fullName } from '../utils/formatters';
 import { useForm } from 'react-hook-form';
+
+/**
+ * Whether Farik may text this tenant, and how that permission was obtained.
+ *
+ * Shown to the landlord because it is the difference between a repair Farik can chase
+ * over SMS and one it can only triage silently — and because a landlord attesting on a
+ * tenant's behalf is a real compliance action, not a toggle.
+ */
+const SmsConsentCell = ({ tenant, onChanged }) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const optedOut = Boolean(tenant.smsOptOutAt);
+  const consented = Boolean(tenant.smsConsent) && !optedOut;
+
+  const attest = async () => {
+    if (!confirm(`Confirm that ${tenant.firstName} has agreed to receive text messages about repairs at ${tenant.phone}.`)) return;
+    setBusy(true);
+    setError('');
+    try {
+      await attestTenantSmsConsent(tenant.id);
+      onChanged();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not enable texting.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (consented) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700" title={tenant.smsConsentSource || undefined}>
+        <MessageSquare size={12} /> Texting on
+      </span>
+    );
+  }
+  if (optedOut) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-slate-500" title="Only the tenant can resume texting, by replying START">
+        <MessageSquareOff size={12} /> Opted out
+      </span>
+    );
+  }
+  if (!tenant.phone) {
+    return <span className="text-xs text-slate-400">No mobile number</span>;
+  }
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={attest}
+        disabled={busy}
+        className="text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline disabled:opacity-50"
+      >
+        {busy ? 'Enabling…' : 'Enable texting'}
+      </button>
+      {error && <p className="text-xs text-red-600 mt-1">{error}</p>}
+    </div>
+  );
+};
 
 const TenantsPage = () => {
   const [search, setSearch] = useState('');
   const [editTenant, setEditTenant] = useState(null);
   const [viewTenant, setViewTenant] = useState(null);
+  const [addOpen, setAddOpen] = useState(false);
+  // Loaded lazily the first time the Add tenant dialog opens.
+  const [properties, setProperties] = useState(null);
 
   const { data, loading, error, refetch } = useFetch(getTenants);
   const tenants = data?.tenants || [];
@@ -41,16 +106,27 @@ const TenantsPage = () => {
     refetch();
   };
 
+  const openAdd = async () => {
+    setAddOpen(true);
+    if (properties === null) {
+      try {
+        const d = await getProperties();
+        setProperties(d.properties || []);
+      } catch {
+        setProperties([]);
+      }
+    }
+  };
+
   const onDelete = async (id) => {
     if (!confirm('Remove this tenant and all related data?')) return;
     await deleteTenant(id);
     refetch();
   };
 
-  const getPaymentStatus = (tenant) => {
-    const p = tenant.payments?.[0];
-    return p?.status || 'PENDING';
-  };
+  // Null (not 'PENDING') when nothing has been recorded yet, so a brand-new
+  // tenant isn't shown as owing money.
+  const getPaymentStatus = (tenant) => tenant.payments?.[0]?.status || null;
 
   const getLastLease = (tenant) => tenant.leases?.[0];
 
@@ -64,19 +140,37 @@ const TenantsPage = () => {
     <div>
       <PageHeader
         title="Tenants"
-        description={`${tenants.length} total tenants`}
+        description={`${tenants.length} ${tenants.length === 1 ? 'tenant' : 'tenants'}`}
+        action={
+          <button className="btn-primary" onClick={openAdd}>
+            <Plus size={16} aria-hidden="true" /> Add tenant
+          </button>
+        }
       />
 
-      <div className="card mb-5">
-        <SearchFilterBar value={search} onChange={setSearch} placeholder="Search by name, email, unit..." />
-      </div>
+      {tenants.length > 0 && (
+        <div className="card mb-5">
+          <SearchFilterBar value={search} onChange={setSearch} placeholder="Search by name, email, unit..." />
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>
       )}
 
-      {filtered.length === 0 ? (
-        <EmptyState icon={Users} title="No tenants found" description="No tenants match your search criteria." />
+      {tenants.length === 0 ? (
+        <EmptyState
+          icon={Users}
+          title="No tenants yet"
+          description="Add a tenant to start managing leases and rent. Their account is created for them and linked to a unit."
+          action={
+            <button className="btn-primary" onClick={openAdd}>
+              <Plus size={16} aria-hidden="true" /> Add tenant
+            </button>
+          }
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={Users} title="No tenants match your search" description="Try a different name, email, or unit." />
       ) : (
         <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto">
@@ -119,6 +213,9 @@ const TenantsPage = () => {
                               {tenant.phone}
                             </div>
                           )}
+                          <div className="pt-0.5">
+                            <SmsConsentCell tenant={tenant} onChanged={refetch} />
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-4 hidden lg:table-cell">
@@ -141,7 +238,9 @@ const TenantsPage = () => {
                         ) : '—'}
                       </td>
                       <td className="px-4 py-4">
-                        <PaymentStatusBadge status={getPaymentStatus(tenant)} />
+                        {getPaymentStatus(tenant)
+                          ? <PaymentStatusBadge status={getPaymentStatus(tenant)} />
+                          : <span className="text-xs text-slate-400">No payments yet</span>}
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-1 justify-end">
@@ -176,6 +275,19 @@ const TenantsPage = () => {
           </div>
         </div>
       )}
+
+      {/* Add Modal */}
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add tenant" size="lg">
+        {properties === null ? (
+          <div className="py-10 flex justify-center"><LoadingSpinner /></div>
+        ) : (
+          <AddTenantForm
+            properties={properties}
+            onSuccess={() => { setAddOpen(false); refetch(); }}
+            onCancel={() => setAddOpen(false)}
+          />
+        )}
+      </Modal>
 
       {/* Edit Modal */}
       <Modal open={!!editTenant} onClose={() => setEditTenant(null)} title="Edit Tenant">

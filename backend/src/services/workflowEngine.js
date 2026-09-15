@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { requestStatusForWorkflowState } = require('./workflows/maintenanceRequestStatus');
 
 /**
  * Validates and records a workflow state transition, and (via the caller-supplied
@@ -79,8 +80,39 @@ function maintenancePersist(workflowId) {
     if (result.count === 0) {
       throw new ConcurrentModificationError('MaintenanceWorkflow', workflowId, fromState, toState);
     }
+    await syncRequestStatus(db, workflowId, toState);
     return result;
   };
+}
+
+/**
+ * Projects the new workflow state onto its MaintenanceRequest.
+ *
+ * Deliberately lives here rather than in each caller: this is the one code path every
+ * maintenance transition already funnels through (maintenanceWorkflow, vendorDispatch-
+ * Service, appointmentService and invoiceController all persist through it), and it
+ * runs inside the transition's own transaction — so the two lifecycles commit together
+ * or not at all, and no controller has to remember to keep them aligned.
+ */
+async function syncRequestStatus(db, workflowId, toState) {
+  const status = requestStatusForWorkflowState(toState);
+  if (!status) return;
+
+  const workflow = await db.maintenanceWorkflow.findUnique({
+    where: { id: workflowId },
+    select: { maintenanceRequestId: true },
+  });
+  if (!workflow?.maintenanceRequestId) return;
+
+  await db.maintenanceRequest.updateMany({
+    where: { id: workflow.maintenanceRequestId },
+    data: {
+      status,
+      // resolvedAt records when the repair was actually completed. A cancellation ends
+      // the request without completing it, so it must never stamp one.
+      ...(status === 'RESOLVED' ? { resolvedAt: new Date() } : {}),
+    },
+  });
 }
 
 class InvalidTransitionError extends Error {

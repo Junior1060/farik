@@ -9,4 +9,17 @@ async function isOptedOut(tenantId) {
   return Boolean(tenant?.smsOptOutAt);
 }
 
-module.exports = { isOptedOut };
+/**
+ * Pure predicate over an already-loaded TenantProfile: can we hold a two-way SMS
+ * conversation with this tenant right now?
+ *
+ * `isOptedOut` above stops an individual send; this answers the earlier *routing*
+ * question — whether a workflow may depend on the tenant replying at all. A tenant
+ * with no number, no consent, or an active opt-out can never answer diagnostic
+ * questions, so the workflow must not park itself waiting for one.
+ */
+function canReceiveSms(tenant) {
+  return Boolean(tenant?.phone && tenant.smsConsent && !tenant.smsOptOutAt);
+}
+
+module.exports = { isOptedOut, canReceiveSms };

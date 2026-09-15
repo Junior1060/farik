@@ -9,3 +9,6 @@ export const changePassword = (data) => api.put('/profile/password', data).then(
  * configured for this deployment. Never render a placeholder in its place.
  */
 export const getMessagingConfig = () => api.get('/profile/messaging').then((r) => r.data);
+
+/** Tenant-only: turn text messages about repairs on or off for yourself. */
+export const setSmsConsent = (granted) => api.put('/profile/sms-consent', { granted }).then((r) => r.data.profile);

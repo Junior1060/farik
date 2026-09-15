@@ -3,13 +3,14 @@ const request = require('supertest');
 
 const mockPrisma = {
   tenantProfile: { findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
-  vendor: { findMany: jest.fn() },
-  smsMessage: { create: jest.fn() },
+  vendor: { findMany: jest.fn(), findUnique: jest.fn() },
+  appointment: { create: jest.fn() },
+  smsMessage: { create: jest.fn(), findFirst: jest.fn() },
   maintenanceWorkflow: { findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   vendorContactAttempt: { findFirst: jest.fn(), update: jest.fn(), count: jest.fn(), findMany: jest.fn(), create: jest.fn() },
   conversation: { findFirst: jest.fn(), create: jest.fn() },
   message: { create: jest.fn() },
-  maintenanceRequest: { findUnique: jest.fn(), update: jest.fn() },
+  maintenanceRequest: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   workflowEvent: { create: jest.fn() },
   landlordProfile: { findUnique: jest.fn() },
   agentLog: { create: jest.fn() },
@@ -54,6 +55,13 @@ beforeEach(() => {
   mockPrisma.maintenanceWorkflow.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: null });
   mockPrisma.tenantProfile.update.mockResolvedValue({});
+  mockPrisma.smsMessage.findFirst.mockResolvedValue(null); // no prior consent prompt
+  mockPrisma.message.create.mockResolvedValue({ id: 'msg-1' });
+  mockPrisma.vendorContactAttempt.findMany.mockResolvedValue([]);
+  mockPrisma.vendorContactAttempt.count.mockResolvedValue(0);
+  mockPrisma.vendorContactAttempt.create.mockResolvedValue({ id: 'attempt-1' });
+  mockPrisma.appointment.create.mockResolvedValue({ id: 'appt-1' });
+  mockPrisma.maintenanceRequest.updateMany.mockResolvedValue({ count: 1 }); // status projection
 });
 
 afterEach(() => {
@@ -180,7 +188,7 @@ describe('POST /api/webhooks/sms', () => {
     expect(mockPrisma.maintenanceWorkflow.findFirst).not.toHaveBeenCalled();
   });
 
-  it('clears opt-out when a previously opted-out tenant replies START', async () => {
+  it('clears opt-out and records consent when a previously opted-out tenant replies START', async () => {
     mockPrisma.tenantProfile.findMany.mockResolvedValue([{ id: 'tenant-1', userId: 'user-1', phone: '+15551234567', smsOptOutAt: new Date() }]);
     const app = buildApp();
 
@@ -191,7 +199,104 @@ describe('POST /api/webhooks/sms', () => {
 
     expect(res.status).toBe(200);
     expect(mockPrisma.tenantProfile.update).toHaveBeenCalledWith({
-      where: { id: 'tenant-1' }, data: { smsOptOutAt: null },
+      where: { id: 'tenant-1' },
+      data: {
+        smsOptOutAt: null,
+        smsConsent: true,
+        smsConsentAt: expect.any(Date),
+        smsConsentSource: 'SMS_REPLY_START',
+      },
     });
+  });
+
+  it('records consent as a double opt-in when a never-consented tenant replies YES', async () => {
+    mockPrisma.tenantProfile.findMany.mockResolvedValue([
+      { id: 'tenant-1', userId: 'user-1', phone: '+15551234567', smsConsent: false, smsOptOutAt: null },
+    ]);
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+15551234567', Body: 'YES', MessageSid: 'SM6' });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.tenantProfile.update).toHaveBeenCalledWith({
+      where: { id: 'tenant-1' },
+      data: {
+        smsOptOutAt: null,
+        smsConsent: true,
+        smsConsentAt: expect.any(Date),
+        smsConsentSource: 'SMS_DOUBLE_OPT_IN',
+      },
+    });
+  });
+
+  it('asks an unconsented tenant for consent once, and still records what they said', async () => {
+    mockPrisma.tenantProfile.findMany.mockResolvedValue([
+      { id: 'tenant-1', userId: 'user-1', phone: '+15551234567', smsConsent: false, smsOptOutAt: null },
+    ]);
+    mockPrisma.maintenanceWorkflow.findFirst.mockResolvedValue(null);
+    mockPrisma.smsMessage.findFirst.mockResolvedValue(null); // not asked before
+    mockPrisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+15551234567', Body: 'my sink is leaking', MessageSid: 'SM7' });
+
+    expect(res.status).toBe(200);
+    const outbound = mockPrisma.smsMessage.create.mock.calls
+      .map((c) => c[0].data)
+      .filter((d) => d.direction === 'OUTBOUND');
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].body).toMatch(/Reply YES/);
+    // The tenant's actual message is never swallowed by the consent prompt.
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ body: 'my sink is leaking' }) }),
+    );
+  });
+
+  it('does not re-ask a tenant who was already prompted for consent recently', async () => {
+    mockPrisma.tenantProfile.findMany.mockResolvedValue([
+      { id: 'tenant-1', userId: 'user-1', phone: '+15551234567', smsConsent: false, smsOptOutAt: null },
+    ]);
+    mockPrisma.maintenanceWorkflow.findFirst.mockResolvedValue(null);
+    mockPrisma.smsMessage.findFirst.mockResolvedValue({ id: 'prior-prompt' }); // asked already
+    mockPrisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+15551234567', Body: 'still leaking', MessageSid: 'SM8' });
+
+    expect(res.status).toBe(200);
+    const outbound = mockPrisma.smsMessage.create.mock.calls
+      .map((c) => c[0].data)
+      .filter((d) => d.direction === 'OUTBOUND');
+    expect(outbound).toHaveLength(0);
+  });
+
+  it('never prompts a tenant who has opted out', async () => {
+    mockPrisma.tenantProfile.findMany.mockResolvedValue([
+      { id: 'tenant-1', userId: 'user-1', phone: '+15551234567', smsConsent: false, smsOptOutAt: new Date() },
+    ]);
+    mockPrisma.maintenanceWorkflow.findFirst.mockResolvedValue(null);
+    mockPrisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+15551234567', Body: 'hello', MessageSid: 'SM9' });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.smsMessage.findFirst).not.toHaveBeenCalled();
+    const outbound = mockPrisma.smsMessage.create.mock.calls
+      .map((c) => c[0].data)
+      .filter((d) => d.direction === 'OUTBOUND');
+    expect(outbound).toHaveLength(0);
   });
 });
