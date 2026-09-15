@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import { Users, Plus, Edit, Trash2, Eye, Phone, Mail, MessageSquareOff, MessageSquare } from 'lucide-react';
-import AddTenantForm from '../components/tenants/AddTenantForm';
-import { getProperties } from '../services/propertyService';
 import PageHeader from '../components/ui/PageHeader';
 import SearchFilterBar from '../components/ui/SearchFilterBar';
 import PaymentStatusBadge from '../components/ui/PaymentStatusBadge';
@@ -78,9 +76,6 @@ const TenantsPage = () => {
   const [search, setSearch] = useState('');
   const [editTenant, setEditTenant] = useState(null);
   const [viewTenant, setViewTenant] = useState(null);
-  const [addOpen, setAddOpen] = useState(false);
-  // Loaded lazily the first time the Add tenant dialog opens.
-  const [properties, setProperties] = useState(null);
 
   const { data, loading, error, refetch } = useFetch(getTenants);
   const tenants = data?.tenants || [];
@@ -106,27 +101,16 @@ const TenantsPage = () => {
     refetch();
   };
 
-  const openAdd = async () => {
-    setAddOpen(true);
-    if (properties === null) {
-      try {
-        const d = await getProperties();
-        setProperties(d.properties || []);
-      } catch {
-        setProperties([]);
-      }
-    }
-  };
-
   const onDelete = async (id) => {
     if (!confirm('Remove this tenant and all related data?')) return;
     await deleteTenant(id);
     refetch();
   };
 
-  // Null (not 'PENDING') when nothing has been recorded yet, so a brand-new
-  // tenant isn't shown as owing money.
-  const getPaymentStatus = (tenant) => tenant.payments?.[0]?.status || null;
+  const getPaymentStatus = (tenant) => {
+    const p = tenant.payments?.[0];
+    return p?.status || 'PENDING';
+  };
 
   const getLastLease = (tenant) => tenant.leases?.[0];
 
@@ -140,37 +124,19 @@ const TenantsPage = () => {
     <div>
       <PageHeader
         title="Tenants"
-        description={`${tenants.length} ${tenants.length === 1 ? 'tenant' : 'tenants'}`}
-        action={
-          <button className="btn-primary" onClick={openAdd}>
-            <Plus size={16} aria-hidden="true" /> Add tenant
-          </button>
-        }
+        description={`${tenants.length} total tenants`}
       />
 
-      {tenants.length > 0 && (
-        <div className="card mb-5">
-          <SearchFilterBar value={search} onChange={setSearch} placeholder="Search by name, email, unit..." />
-        </div>
-      )}
+      <div className="card mb-5">
+        <SearchFilterBar value={search} onChange={setSearch} placeholder="Search by name, email, unit..." />
+      </div>
 
       {error && (
         <div className="bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>
       )}
 
-      {tenants.length === 0 ? (
-        <EmptyState
-          icon={Users}
-          title="No tenants yet"
-          description="Add a tenant to start managing leases and rent. Their account is created for them and linked to a unit."
-          action={
-            <button className="btn-primary" onClick={openAdd}>
-              <Plus size={16} aria-hidden="true" /> Add tenant
-            </button>
-          }
-        />
-      ) : filtered.length === 0 ? (
-        <EmptyState icon={Users} title="No tenants match your search" description="Try a different name, email, or unit." />
+      {filtered.length === 0 ? (
+        <EmptyState icon={Users} title="No tenants found" description="No tenants match your search criteria." />
       ) : (
         <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto">
@@ -238,9 +204,7 @@ const TenantsPage = () => {
                         ) : '—'}
                       </td>
                       <td className="px-4 py-4">
-                        {getPaymentStatus(tenant)
-                          ? <PaymentStatusBadge status={getPaymentStatus(tenant)} />
-                          : <span className="text-xs text-slate-400">No payments yet</span>}
+                        <PaymentStatusBadge status={getPaymentStatus(tenant)} />
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-1 justify-end">
@@ -275,19 +239,6 @@ const TenantsPage = () => {
           </div>
         </div>
       )}
-
-      {/* Add Modal */}
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add tenant" size="lg">
-        {properties === null ? (
-          <div className="py-10 flex justify-center"><LoadingSpinner /></div>
-        ) : (
-          <AddTenantForm
-            properties={properties}
-            onSuccess={() => { setAddOpen(false); refetch(); }}
-            onCancel={() => setAddOpen(false)}
-          />
-        )}
-      </Modal>
 
       {/* Edit Modal */}
       <Modal open={!!editTenant} onClose={() => setEditTenant(null)} title="Edit Tenant">

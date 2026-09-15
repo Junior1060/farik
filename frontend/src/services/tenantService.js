@@ -11,10 +11,3 @@ export const deleteTenant = (id) => api.delete(`/tenants/${id}`).then((r) => r.d
  * the API refuses to override a tenant who replied STOP.
  */
 export const attestTenantSmsConsent = (id) => api.put(`/tenants/${id}/sms-consent`).then((r) => r.data.tenant);
-
-/**
- * Landlord adds a tenant and their first lease in one call. If nobody has
- * registered with that email yet, a claimable placeholder account is created.
- * Resolves with { tenant, lease }.
- */
-export const createTenant = (data) => api.post('/tenants', data).then((r) => r.data);

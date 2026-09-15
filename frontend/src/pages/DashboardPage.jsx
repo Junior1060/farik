@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   DollarSign, Clock, Home, Wrench, CheckCircle2, AlertTriangle,
   Bot, Zap, MessageSquare, FileText, RotateCcw, ChevronRight, ArrowRight,
@@ -16,7 +16,6 @@ import { formatCurrency, formatDate, daysUntilLabel } from '../utils/formatters'
 import { useNavigate } from 'react-router-dom';
 import { useAutopilot } from '../context/AutopilotContext';
 import NeedsYouPanel from '../components/dashboard/NeedsYouPanel';
-import GettingStartedPanel from '../components/dashboard/GettingStartedPanel';
 
 // ── Autopilot Status Bar ────────────────────────────────────────────────────
 
@@ -245,6 +244,13 @@ const DashboardPage = () => {
   const { data: summary, loading: loadingSummary } = useFetch(getDashboardSummary);
   const { data: activityData, loading: loadingActivity } = useFetch(getDashboardActivity);
 
+  // First-run onboarding: a landlord with an empty account is sent straight to AI import.
+  useEffect(() => {
+    if (summary && summary.stats?.totalUnits === 0) {
+      navigate('/import', { replace: true });
+    }
+  }, [summary, navigate]);
+
   if (loadingSummary) return (
     <div className="flex items-center justify-center h-64">
       <LoadingSpinner size="lg" />
@@ -256,7 +262,6 @@ const DashboardPage = () => {
   const maintenance = summary?.recentMaintenance || [];
   const expiringLeases = summary?.expiringLeases || [];
   const activity = activityData?.activity || [];
-  const isEmptyAccount = (stats.totalUnits || 0) === 0;
 
   return (
     <div className="flex gap-6">
@@ -267,9 +272,6 @@ const DashboardPage = () => {
 
         {/* Needs You — pending escalations */}
         <NeedsYouPanel />
-
-        {/* New account: clear next step instead of a page of zeros */}
-        {isEmptyAccount && <GettingStartedPanel />}
 
         {/* Stats row */}
         <div className="grid grid-cols-1 min-[420px]:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -330,7 +332,7 @@ const DashboardPage = () => {
               </button>
             </div>
             {maintenance.length === 0 ? (
-              <p className="text-sm text-slate-500 py-4 text-center">No maintenance requests yet. Tenant requests show up here.</p>
+              <p className="text-sm text-slate-400 py-4 text-center">No maintenance requests</p>
             ) : (
               <div className="space-y-3">
                 {maintenance.map((req) => (
@@ -360,7 +362,7 @@ const DashboardPage = () => {
               </button>
             </div>
             {expiringLeases.length === 0 ? (
-              <p className="text-sm text-slate-500 py-4 text-center">No leases expiring in the next 30 days.</p>
+              <p className="text-sm text-slate-400 py-4 text-center">No leases expiring soon</p>
             ) : (
               <div className="space-y-3">
                 {expiringLeases.map((lease) => (

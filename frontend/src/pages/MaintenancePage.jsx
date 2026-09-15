@@ -89,14 +89,8 @@ const MaintenancePage = () => {
 
       {error && <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
 
-      {requests.length === 0 ? (
-        <EmptyState
-          icon={Wrench}
-          title="No maintenance requests yet"
-          description="Requests your tenants submit show up here with photos, priority, and progress tracking."
-        />
-      ) : filtered.length === 0 ? (
-        <EmptyState icon={Wrench} title="No requests match your filters" description="Try a different status or search term." />
+      {filtered.length === 0 ? (
+        <EmptyState icon={Wrench} title="No maintenance requests" description="No requests match your current filters." />
       ) : (
         <div className="space-y-3">
           {filtered.map((req) => (

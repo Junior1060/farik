@@ -14,8 +14,7 @@
     "db:reset": "prisma migrate reset --force && node prisma/seed.js",
     "test": "jest --runInBand",
     "test:watch": "jest --watch --runInBand",
-    "backfill:policy-defaults": "node scripts/backfillPolicyDefaults.js",
-    "lint": "eslint ."
+    "backfill:policy-defaults": "node scripts/backfillPolicyDefaults.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
@@ -38,9 +37,6 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
-    "eslint": "^9.39.5",
-    "globals": "^15.15.0",
     "jest": "^30.4.2",
     "nodemon": "^3.1.0",
     "prisma": "^5.10.0",

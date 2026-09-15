@@ -54,6 +54,7 @@ app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/appointments', require('./routes/appointments'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/import', require('./routes/import'));
+app.use('/api/pilot-applications', require('./routes/pilotApplications'));
 
 // Serve uploaded documents (read-only)
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

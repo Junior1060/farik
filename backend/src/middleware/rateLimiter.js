@@ -19,4 +19,15 @@ const costSensitiveLimiter = rateLimit({
   message: { error: 'Too many requests. Please slow down and try again shortly.' },
 });
 
-module.exports = { authLimiter, costSensitiveLimiter };
+// Public, unauthenticated marketing forms (the pilot application). Tight enough
+// to blunt scripted spam, loose enough that a household behind one NAT address
+// can still apply and retry after a mistake.
+const publicFormLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many submissions from this network. Please try again later.' },
+});
+
+module.exports = { authLimiter, costSensitiveLimiter, publicFormLimiter };

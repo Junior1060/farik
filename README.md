@@ -197,52 +197,123 @@ GET    /api/maintenance
 POST   /api/maintenance         (tenant)
 PUT    /api/maintenance/:id     (landlord)
 
+GET    /api/pilot-applications/config   (public — is booking configured?)
+POST   /api/pilot-applications          (public — submit an application)
+GET    /api/pilot-applications          (admin allowlist)
+PATCH  /api/pilot-applications/:id      (admin allowlist)
 ```
 
 ---
 
-## Self-serve signup and onboarding
+## Founding Landlord Pilot
 
-Farik is self-serve: anyone can create a landlord account from the homepage and
-start managing rentals immediately. There is no application, waitlist, or
-approval step.
+The pilot section at the bottom of `/` posts a real application to
+`POST /api/pilot-applications`, stores it in the `pilot_applications` table,
+emails the team and the applicant, and then offers the applicant a
+"Book a 15-minute call" button.
 
-- `/signup` — landlord signup (full name, email, password, optional company).
-  Posts to `POST /api/auth/register`, stores the JWT the same way login does,
-  and redirects into `/onboarding`.
-- `/signup/tenant` — tenant signup. If a landlord already added the tenant
-  (which creates a placeholder account with `invitePending = true`), signing up
-  with the same email claims that account instead of failing as a duplicate.
-- `/onboarding` — welcome → import existing data (the real `/import` wizard) or
-  set up a first property manually → add a first tenant → dashboard. Every step
-  can be skipped; the same actions are reachable later from the app.
-- `POST /api/properties` accepts optional `propertyType` and `unitCount`
-  (creates placeholder units `Unit 1..N` with no rent set).
-- `POST /api/tenants` lets a landlord add a tenant and their first lease in one
-  call (tenants only appear for a landlord once they hold a lease on one of that
-  landlord's units).
+**Every part of this degrades safely.** Missing email config or a missing
+booking link never blocks a submission and never surfaces a configuration
+message to the applicant — the server logs a warning instead.
 
-Emails are normalised to lower case on registration; login falls back to a
-case-insensitive match so older mixed-case accounts still work.
+### Configure email
 
-### Demo credentials on /login
+Notifications reuse the existing Nodemailer/SMTP service
+(`backend/src/services/emailService.js`) — the same transport the Autopilot
+escalation emails use. There is no second email provider to set up.
 
-The seeded demo shortcut buttons on the login page are **off by default**. Set
-`VITE_ENABLE_DEMO_LOGIN=true` in `frontend/.env` only on a seeded demo
-environment.
+```bash
+# backend/.env
+SMTP_HOST="smtp.example.com"
+SMTP_PORT="587"
+SMTP_SECURE="false"
+SMTP_USER="..."
+SMTP_PASS="..."
+SMTP_FROM='"Farik" <noreply@farik.ca>'
 
-### Migrations
+PILOT_NOTIFICATION_EMAIL="founders@yourdomain.ca"   # where applications land
+```
+
+With `SMTP_HOST`/`SMTP_USER` blank, emails are logged to the console instead of
+sent — useful locally. With `PILOT_NOTIFICATION_EMAIL` blank, the applicant still
+gets their confirmation and the team notification is skipped with a warning.
+
+### Configure the scheduling link
+
+```bash
+# backend/.env
+BOOKING_URL="https://cal.com/farik/15min"    # or a Calendly link
+```
+
+The backend serves this to the browser from `GET /api/pilot-applications/config`,
+so there is a single source of truth and no risk of the frontend and the
+confirmation email disagreeing. Applicant details (`name`, `email`, `phone`,
+`city`, `units`, `pilot_ref`) are appended as query parameters — both Cal.com and
+Calendly prefill from those.
+
+`frontend/.env` may set `VITE_BOOKING_URL` as a fallback, but only for a frontend
+deployed before the API is reachable.
+
+### Configure admin access
+
+There is no admin role in the schema. Access to submitted applications is an
+explicit email allowlist checked against the authenticated user's own account:
+
+```bash
+# backend/.env
+ADMIN_EMAILS="you@yourdomain.ca,cofounder@yourdomain.ca"
+```
+
+Then sign in as that user and open `/admin/pilot-applications`. An empty
+allowlist means nobody can read applications — it fails closed.
+
+### Run the migration
 
 ```bash
 cd backend
-npx prisma migrate deploy     # production / CI (also runs on npm start)
+npx prisma migrate deploy     # production / CI
 npx prisma migrate dev        # local, also regenerates the client
+npx prisma generate           # if you only pulled new schema changes
 ```
 
-`20260915000000_self_serve_onboarding` adds `properties.propertyType` and
-`users.invitePending` (both additive). `20260915000001_remove_pilot_applications`
-drops the retired `pilot_applications` table and its enums — export that table
-first if you still want the leads.
+The migration is `prisma/migrations/20260804090000_pilot_applications`. It adds
+the `pilot_applications` table plus the `PilotApplicationStatus` and
+`PreferredContactMethod` enums. It is additive — no existing table is touched.
+
+### Test the form locally
+
+```bash
+cd backend  && npm run dev     # :5000
+cd frontend && npm run dev     # :5173, proxies /api
+```
+
+Open `http://localhost:5173/#pilot`, fill the form, submit. Then:
+
+- **Verify the submission** — `npx prisma studio` in `backend/` and open the
+  `PilotApplication` model, or:
+  ```bash
+  psql "$DATABASE_URL" -c 'select id, "fullName", email, city, "unitsManaged", status, "createdAt" from pilot_applications order by "createdAt" desc limit 5;'
+  ```
+- **Verify the emails** — with SMTP unset, both appear in the backend console as
+  `[Email] (No SMTP configured) → …`. The submission log line reads
+  `[pilot] Application <id> stored. team_email=… applicant_email=… booking=…`
+  and deliberately contains no applicant PII.
+- **Verify booking prefill** — the success panel's button href should carry
+  `?name=…&email=…&pilot_ref=…`.
+
+### Test the booking fallback
+
+Clear `BOOKING_URL` in `backend/.env`, restart the API, and submit again. The
+success panel should read *"The Farik team will contact you within one business
+day"* with no booking button, the confirmation email should omit the button, and
+the server log should carry the `[pilot] BOOKING_URL is not configured` warning.
+Nothing about the configuration is shown to the applicant.
+
+### Spam and abuse controls
+
+An off-screen honeypot field (`website`), a 10-per-hour-per-IP rate limit on the
+public endpoint, server-side zod validation independent of the client, a 10-minute
+idempotency window per email address, and salted-hash-only IP storage.
 
 ---
 
