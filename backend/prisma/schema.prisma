@@ -8,6 +8,22 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum PropertyType {
+  SINGLE_FAMILY
+  MULTI_FAMILY
+  CONDO
+  TOWNHOUSE
+  OTHER
+}
+
+// INVITED: a landlord or an import created the record with a random placeholder
+// password; the person activates it by signing up with the same email.
+// ACTIVE: the person has set their own password.
+enum AccountStatus {
+  ACTIVE
+  INVITED
+}
+
 enum Role {
   LANDLORD
   TENANT
@@ -172,6 +188,7 @@ model User {
   email     String   @unique
   password  String
   role      Role     @default(TENANT)
+  accountStatus AccountStatus @default(ACTIVE)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -248,6 +265,7 @@ model Property {
   city        String
   state       String
   zip         String
+  propertyType PropertyType?
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -687,49 +705,4 @@ model UploadedDocument {
   lease    Lease?          @relation(fields: [leaseId], references: [id], onDelete: SetNull)
 
   @@map("uploaded_documents")
-}
-
-// ─── Founding Landlord Pilot ──────────────────────────────────────────────────
-// Public marketing-site submissions. Deliberately NOT related to User: an
-// applicant has no account yet, and the row must survive them creating one.
-
-enum PilotApplicationStatus {
-  NEW
-  CONTACTED
-  CALL_BOOKED
-  PILOT_ACCEPTED
-  PILOT_DECLINED
-}
-
-enum PreferredContactMethod {
-  EMAIL
-  PHONE
-  TEXT
-}
-
-model PilotApplication {
-  id                      String                 @id @default(cuid())
-  fullName                String
-  email                   String
-  phone                   String
-  city                    String
-  unitsManaged            Int
-  companyName             String?
-  currentManagementMethod String?
-  biggestProblem          String
-  preferredContactMethod  PreferredContactMethod
-  additionalNotes         String?
-  status                  PilotApplicationStatus @default(NEW)
-  source                  String                 @default("website")
-  internalNotes           String?
-  bookedCallAt            DateTime?
-  bookingReference        String?
-  // Salted hash only — enough to spot abuse patterns, never the raw address.
-  submitterIpHash         String?
-  createdAt               DateTime               @default(now())
-  updatedAt               DateTime               @updatedAt
-
-  @@index([email])
-  @@index([status, createdAt])
-  @@map("pilot_applications")
 }

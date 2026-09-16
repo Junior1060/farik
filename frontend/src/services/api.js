@@ -12,16 +12,26 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 globally
+/**
+ * A 401 from login/register is wrong credentials and belongs to the form. A 401
+ * from /auth/me is the session probe on app load; AuthContext already clears the
+ * session and React Router sends the person to /login, so no browser navigation
+ * is needed. Everything else with a 401 is an expired or invalid session.
+ */
+export const isAuthEndpoint = (config) => /\/auth\/(login|register|me)\/?$/.test(config?.url || '');
+
+/** Already on an auth page: clearing the token is enough; navigating would loop. */
+export const onAuthPage = (pathname) => /^\/(login|signup)(\/|$)/.test(pathname || '');
+
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    if (err?.response?.status === 401 && !isAuthEndpoint(err.config)) {
       localStorage.removeItem('rentora_token');
-      window.location.href = '/login';
+      if (!onAuthPage(window.location.pathname)) window.location.href = '/login';
     }
     return Promise.reject(err);
-  }
+  },
 );
 
 // Backend origin for static assets (uploads live at <origin>/uploads, outside /api).

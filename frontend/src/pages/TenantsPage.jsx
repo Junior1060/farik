@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Users, Plus, Edit, Trash2, Eye, Phone, Mail, MessageSquareOff, MessageSquare } from 'lucide-react';
+import TenantLeaseForm from '../components/tenants/TenantLeaseForm';
+import { getProperties } from '../services/propertyService';
 import PageHeader from '../components/ui/PageHeader';
 import SearchFilterBar from '../components/ui/SearchFilterBar';
 import PaymentStatusBadge from '../components/ui/PaymentStatusBadge';
@@ -76,6 +78,9 @@ const TenantsPage = () => {
   const [search, setSearch] = useState('');
   const [editTenant, setEditTenant] = useState(null);
   const [viewTenant, setViewTenant] = useState(null);
+  const [addOpen, setAddOpen] = useState(false);
+  // Loaded lazily the first time the Add tenant dialog opens.
+  const [properties, setProperties] = useState(null);
 
   const { data, loading, error, refetch } = useFetch(getTenants);
   const tenants = data?.tenants || [];
@@ -101,16 +106,27 @@ const TenantsPage = () => {
     refetch();
   };
 
+  const openAdd = async () => {
+    setAddOpen(true);
+    if (properties === null) {
+      try {
+        const d = await getProperties();
+        setProperties(d.properties || []);
+      } catch {
+        setProperties([]);
+      }
+    }
+  };
+
   const onDelete = async (id) => {
     if (!confirm('Remove this tenant and all related data?')) return;
     await deleteTenant(id);
     refetch();
   };
 
-  const getPaymentStatus = (tenant) => {
-    const p = tenant.payments?.[0];
-    return p?.status || 'PENDING';
-  };
+  // Null (not 'PENDING') when nothing has been recorded yet, so a brand-new
+  // tenant isn't shown as owing money.
+  const getPaymentStatus = (tenant) => tenant.payments?.[0]?.status || null;
 
   const getLastLease = (tenant) => tenant.leases?.[0];
 
@@ -124,19 +140,37 @@ const TenantsPage = () => {
     <div>
       <PageHeader
         title="Tenants"
-        description={`${tenants.length} total tenants`}
+        description={`${tenants.length} ${tenants.length === 1 ? 'tenant' : 'tenants'}`}
+        action={
+          <button className="btn-primary" onClick={openAdd}>
+            <Plus size={16} aria-hidden="true" /> Add tenant
+          </button>
+        }
       />
 
-      <div className="card mb-5">
-        <SearchFilterBar value={search} onChange={setSearch} placeholder="Search by name, email, unit..." />
-      </div>
+      {tenants.length > 0 && (
+        <div className="card mb-5">
+          <SearchFilterBar value={search} onChange={setSearch} placeholder="Search by name, email, unit..." />
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>
       )}
 
-      {filtered.length === 0 ? (
-        <EmptyState icon={Users} title="No tenants found" description="No tenants match your search criteria." />
+      {tenants.length === 0 ? (
+        <EmptyState
+          icon={Users}
+          title="No tenants yet"
+          description="Add your first tenant to start managing leases and rent."
+          action={
+            <button className="btn-primary" onClick={openAdd}>
+              <Plus size={16} aria-hidden="true" /> Add tenant
+            </button>
+          }
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={Users} title="No tenants match your search" description="Try a different name, email, or unit." />
       ) : (
         <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto">
@@ -162,7 +196,14 @@ const TenantsPage = () => {
                             {tenant.firstName[0]}{tenant.lastName[0]}
                           </div>
                           <div>
-                            <p className="text-sm font-semibold text-slate-800">{fullName(tenant)}</p>
+                            <p className="text-sm font-semibold text-slate-800">
+                              {fullName(tenant)}
+                              {tenant.user?.accountStatus === 'INVITED' && (
+                                <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5" title="Hasn't activated their login yet">
+                                  Invited
+                                </span>
+                              )}
+                            </p>
                             <p className="text-xs text-slate-400">{tenant.user?.email}</p>
                           </div>
                         </div>
@@ -204,7 +245,9 @@ const TenantsPage = () => {
                         ) : '—'}
                       </td>
                       <td className="px-4 py-4">
-                        <PaymentStatusBadge status={getPaymentStatus(tenant)} />
+                        {getPaymentStatus(tenant)
+                          ? <PaymentStatusBadge status={getPaymentStatus(tenant)} />
+                          : <span className="text-xs text-slate-400">No payments yet</span>}
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-1 justify-end">
@@ -239,6 +282,19 @@ const TenantsPage = () => {
           </div>
         </div>
       )}
+
+      {/* Add Modal */}
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add tenant" size="lg">
+        {properties === null ? (
+          <div className="py-10 flex justify-center"><LoadingSpinner /></div>
+        ) : (
+          <TenantLeaseForm
+            properties={properties}
+            onSuccess={() => { setAddOpen(false); refetch(); }}
+            onCancel={() => setAddOpen(false)}
+          />
+        )}
+      </Modal>
 
       {/* Edit Modal */}
       <Modal open={!!editTenant} onClose={() => setEditTenant(null)} title="Edit Tenant">

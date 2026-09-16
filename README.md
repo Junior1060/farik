@@ -170,6 +170,7 @@ GET    /api/dashboard/summary
 GET    /api/dashboard/activity
 
 GET    /api/tenants
+POST   /api/tenants            (landlord adds a tenant + first lease)
 GET    /api/tenants/:id
 PUT    /api/tenants/:id
 DELETE /api/tenants/:id
@@ -197,123 +198,86 @@ GET    /api/maintenance
 POST   /api/maintenance         (tenant)
 PUT    /api/maintenance/:id     (landlord)
 
-GET    /api/pilot-applications/config   (public — is booking configured?)
-POST   /api/pilot-applications          (public — submit an application)
-GET    /api/pilot-applications          (admin allowlist)
-PATCH  /api/pilot-applications/:id      (admin allowlist)
 ```
 
 ---
 
-## Founding Landlord Pilot
+## Self-serve signup and onboarding
 
-The pilot section at the bottom of `/` posts a real application to
-`POST /api/pilot-applications`, stores it in the `pilot_applications` table,
-emails the team and the applicant, and then offers the applicant a
-"Book a 15-minute call" button.
+Farik is self-serve: anyone can create a landlord account from the homepage and
+start managing rentals immediately. There is no application, waitlist, sales
+call, or approval step.
 
-**Every part of this degrades safely.** Missing email config or a missing
-booking link never blocks a submission and never surfaces a configuration
-message to the applicant — the server logs a warning instead.
+**Flow:** Homepage → `/signup` → `/onboarding` → import or manual setup → `/dashboard`.
 
-### Configure email
+### Authentication
 
-Notifications reuse the existing Nodemailer/SMTP service
-(`backend/src/services/emailService.js`) — the same transport the Autopilot
-escalation emails use. There is no second email provider to set up.
-
-```bash
-# backend/.env
-SMTP_HOST="smtp.example.com"
-SMTP_PORT="587"
-SMTP_SECURE="false"
-SMTP_USER="..."
-SMTP_PASS="..."
-SMTP_FROM='"Farik" <noreply@farik.ca>'
-
-PILOT_NOTIFICATION_EMAIL="founders@yourdomain.ca"   # where applications land
+```
+POST /api/auth/register   { fullName | firstName+lastName, email, password, companyName?, role? }
+POST /api/auth/login      { email, password }
+GET  /api/auth/me         (Bearer token)
 ```
 
-With `SMTP_HOST`/`SMTP_USER` blank, emails are logged to the console instead of
-sent — useful locally. With `PILOT_NOTIFICATION_EMAIL` blank, the applicant still
-gets their confirmation and the team notification is skipped with a warning.
+- Emails are trimmed and lower-cased before lookup and before storage, on both
+  register and login, so `John@example.com` and `john@example.com` are one account.
+  Login also falls back to a case-insensitive match for accounts created before
+  this rule.
+- Passwords must be at least 8 characters.
+- Registration returns `201 { token, user }`; duplicates return `409`.
+- Frontend: `/signup` (landlord), `/signup/tenant` (tenant activation), `/login`.
+  `/register` redirects to `/signup`. Landlords land on `/onboarding` after signup.
 
-### Configure the scheduling link
+### Onboarding
 
-```bash
-# backend/.env
-BOOKING_URL="https://cal.com/farik/15min"    # or a Calendly link
+`/onboarding` (signed-in landlords only, outside the app shell): welcome → **Import my
+property data** (the real `/import` wizard, embedded) or **Set up manually** (first
+property with a type and a unit count, then a first tenant + lease) → dashboard.
+Every step has **Skip for now**; the same actions are reachable later from the app.
+
+### Properties, units, tenants
+
+```
+POST /api/properties   { name, address, city, state, zip, propertyType?, unitCount? }
+POST /api/tenants      { firstName, lastName, email, phone?, unitId, startDate, endDate, monthlyRent, deposit?, notes? }
 ```
 
-The backend serves this to the browser from `GET /api/pilot-applications/config`,
-so there is a single source of truth and no risk of the frontend and the
-confirmation email disagreeing. Applicant details (`name`, `email`, `phone`,
-`city`, `units`, `pilot_ref`) are appended as query parameters — both Cal.com and
-Calendly prefill from those.
+- `propertyType` is one of `SINGLE_FAMILY | MULTI_FAMILY | CONDO | TOWNHOUSE | OTHER`.
+- `unitCount` creates placeholder units (`Main` for a single unit, otherwise
+  `Unit 1..N`) with no rent set, so a lease can be attached straight away.
+- `POST /api/tenants` creates the tenant **and** their first lease in one call
+  (a tenant only appears for a landlord once they hold a lease on that landlord's
+  unit). If no account exists for the email, one is created with
+  `accountStatus = INVITED` and a random placeholder password. If a tenant
+  account already exists, it is linked instead.
 
-`frontend/.env` may set `VITE_BOOKING_URL` as a fallback, but only for a frontend
-deployed before the API is reachable.
+### Tenant account lifecycle
 
-### Configure admin access
+`users.accountStatus` is `ACTIVE` or `INVITED`. Tenants created by a landlord or
+by the import wizard are `INVITED` and cannot log in until they activate: signing
+up at `/signup/tenant` with the same email sets their password and flips the
+account to `ACTIVE` instead of failing as a duplicate. Invitation emails are not
+sent yet; the landlord shares the link.
 
-There is no admin role in the schema. Access to submitted applications is an
-explicit email allowlist checked against the authenticated user's own account:
+### Demo credentials on /login
 
-```bash
-# backend/.env
-ADMIN_EMAILS="you@yourdomain.ca,cofounder@yourdomain.ca"
-```
+The seeded demo shortcut buttons are **off by default**. Set
+`VITE_ENABLE_DEMO_LOGIN=true` in `frontend/.env` only on a seeded demo
+environment. The seeded accounts themselves keep working either way.
 
-Then sign in as that user and open `/admin/pilot-applications`. An empty
-allowlist means nobody can read applications — it fails closed.
-
-### Run the migration
+### Migrations
 
 ```bash
 cd backend
-npx prisma migrate deploy     # production / CI
+npx prisma migrate deploy     # production / CI (also runs on npm start)
 npx prisma migrate dev        # local, also regenerates the client
-npx prisma generate           # if you only pulled new schema changes
 ```
 
-The migration is `prisma/migrations/20260804090000_pilot_applications`. It adds
-the `pilot_applications` table plus the `PilotApplicationStatus` and
-`PreferredContactMethod` enums. It is additive — no existing table is touched.
-
-### Test the form locally
-
-```bash
-cd backend  && npm run dev     # :5000
-cd frontend && npm run dev     # :5173, proxies /api
-```
-
-Open `http://localhost:5173/#pilot`, fill the form, submit. Then:
-
-- **Verify the submission** — `npx prisma studio` in `backend/` and open the
-  `PilotApplication` model, or:
-  ```bash
-  psql "$DATABASE_URL" -c 'select id, "fullName", email, city, "unitsManaged", status, "createdAt" from pilot_applications order by "createdAt" desc limit 5;'
-  ```
-- **Verify the emails** — with SMTP unset, both appear in the backend console as
-  `[Email] (No SMTP configured) → …`. The submission log line reads
-  `[pilot] Application <id> stored. team_email=… applicant_email=… booking=…`
-  and deliberately contains no applicant PII.
-- **Verify booking prefill** — the success panel's button href should carry
-  `?name=…&email=…&pilot_ref=…`.
-
-### Test the booking fallback
-
-Clear `BOOKING_URL` in `backend/.env`, restart the API, and submit again. The
-success panel should read *"The Farik team will contact you within one business
-day"* with no booking button, the confirmation email should omit the button, and
-the server log should carry the `[pilot] BOOKING_URL is not configured` warning.
-Nothing about the configuration is shown to the applicant.
-
-### Spam and abuse controls
-
-An off-screen honeypot field (`website`), a 10-per-hour-per-IP rate limit on the
-public endpoint, server-side zod validation independent of the client, a 10-minute
-idempotency window per email address, and salted-hash-only IP storage.
+`20260915000000_self_serve_onboarding` is additive: the `PropertyType` and
+`AccountStatus` enums, `properties.propertyType`, and `users.accountStatus`
+(default `ACTIVE`). `20260916000000_remove_pilot_applications` drops the retired
+pilot-application table and its enums; the older `20260804090000_pilot_applications`
+folder stays in the migrations history because Prisma has already recorded it as
+applied.
 
 ---
 

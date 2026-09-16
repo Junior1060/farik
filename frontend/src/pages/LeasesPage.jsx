@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Edit, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
+import { FileText, Plus, Edit, Trash2 } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import SearchFilterBar from '../components/ui/SearchFilterBar';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -9,7 +9,8 @@ import Modal from '../components/ui/Modal';
 import useFetch from '../hooks/useFetch';
 import { getLeases, createLease, updateLease, deleteLease } from '../services/leaseService';
 import { getProperties } from '../services/propertyService';
-import { lookupTenantByEmail } from '../services/tenantService';
+import { getTenants } from '../services/tenantService';
+import TenantLeaseForm from '../components/tenants/TenantLeaseForm';
 import { formatDate, formatCurrency, daysUntilLabel, fullName } from '../utils/formatters';
 import { useForm } from 'react-hook-form';
 
@@ -97,8 +98,19 @@ const LeasesPage = () => {
 
       {error && <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
 
-      {filtered.length === 0 ? (
-        <EmptyState icon={FileText} title="No leases found" description="No leases match your current filters." />
+      {leases.length === 0 ? (
+        <EmptyState
+          icon={FileText}
+          title="No leases yet"
+          description="Create a lease to connect a tenant to a unit."
+          action={
+            <button className="btn-primary" onClick={() => setCreateOpen(true)}>
+              <Plus size={16} aria-hidden="true" /> Create lease
+            </button>
+          }
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={FileText} title="No leases match your filters" description="Try a different status or search term." />
       ) : (
         <div className="grid gap-4">
           {filtered.map((lease) => {
@@ -211,164 +223,40 @@ const LeasesPage = () => {
   );
 };
 
+/**
+ * Create lease: pick one of the landlord's existing tenants, or add a new tenant
+ * (which creates their invited account and the lease together). Nobody has to
+ * self-register first.
+ */
 const CreateLeaseForm = ({ onSuccess, onCancel }) => {
-  const [emailInput, setEmailInput] = useState('');
-  const [tenantLookup, setTenantLookup] = useState(null);
-  const [lookupError, setLookupError] = useState('');
-  const [looking, setLooking] = useState(false);
-  const [properties, setProperties] = useState([]);
-  const [selectedPropertyId, setSelectedPropertyId] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [formError, setFormError] = useState('');
-
-  const [form, setForm] = useState({
-    unitId: '',
-    startDate: '',
-    endDate: '',
-    monthlyRent: '',
-    deposit: '',
-    notes: '',
-  });
+  const [properties, setProperties] = useState(null);
+  const [tenants, setTenants] = useState([]);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    getProperties().then((d) => setProperties(d.properties || []));
+    let cancelled = false;
+    Promise.all([getProperties(), getTenants()])
+      .then(([p, t]) => {
+        if (cancelled) return;
+        setProperties(p.properties || []);
+        setTenants(t.tenants || []);
+      })
+      .catch(() => { if (!cancelled) { setProperties([]); setLoadError('Could not load your properties and tenants. Close this and try again.'); } });
+    return () => { cancelled = true; };
   }, []);
 
-  const selectedProperty = properties.find((p) => p.id === selectedPropertyId);
-  const availableUnits = selectedProperty?.units.filter((u) => !u.isOccupied) || [];
-
-  const handleLookup = async () => {
-    if (!emailInput.trim()) return;
-    setLooking(true);
-    setLookupError('');
-    setTenantLookup(null);
-    try {
-      const data = await lookupTenantByEmail(emailInput.trim());
-      setTenantLookup(data);
-    } catch (err) {
-      setLookupError(err?.response?.data?.error || 'Tenant not found.');
-    } finally {
-      setLooking(false);
-    }
-  };
-
-  const handleUnitChange = (unitId) => {
-    const unit = availableUnits.find((u) => u.id === unitId);
-    setForm((f) => ({ ...f, unitId, monthlyRent: unit ? String(unit.rentAmount) : f.monthlyRent }));
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!tenantLookup) return;
-    setSubmitting(true);
-    setFormError('');
-    try {
-      await createLease({
-        tenantId: tenantLookup.tenant.id,
-        unitId: form.unitId,
-        startDate: form.startDate,
-        endDate: form.endDate,
-        monthlyRent: Number(form.monthlyRent),
-        deposit: Number(form.deposit),
-        notes: form.notes,
-      });
-      onSuccess();
-    } catch (err) {
-      setFormError(err?.response?.data?.error || 'Failed to create lease.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  if (properties === null) return <div className="py-10 flex justify-center"><LoadingSpinner /></div>;
+  if (loadError) return <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{loadError}</div>;
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Step 1: Tenant lookup */}
-      <div>
-        <label className="label">Tenant email *</label>
-        <div className="flex gap-2">
-          <input
-            type="email"
-            className="input flex-1"
-            placeholder="tenant@email.com"
-            value={emailInput}
-            onChange={(e) => setEmailInput(e.target.value)}
-          />
-          <button type="button" className="btn-secondary" onClick={handleLookup} disabled={looking}>
-            {looking ? 'Looking up...' : 'Look up'}
-          </button>
-        </div>
-        {tenantLookup && (
-          <div className="flex items-center gap-2 mt-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-xl px-3 py-2">
-            <CheckCircle size={14} />
-            Found: <span className="font-medium">{tenantLookup.tenant.firstName} {tenantLookup.tenant.lastName}</span>
-          </div>
-        )}
-        {lookupError && (
-          <div className="flex items-start gap-2 mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
-            <span>{lookupError} Ask them to sign up at <strong>/register</strong> as a Tenant first.</span>
-          </div>
-        )}
-      </div>
-
-      {/* Step 2: Property & Unit */}
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="label">Property *</label>
-          <select className="input" value={selectedPropertyId} onChange={(e) => { setSelectedPropertyId(e.target.value); setForm((f) => ({ ...f, unitId: '' })); }}>
-            <option value="">Select property</option>
-            {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="label">Unit *</label>
-          <select className="input" value={form.unitId} onChange={(e) => handleUnitChange(e.target.value)} disabled={!selectedPropertyId}>
-            <option value="">Select unit</option>
-            {availableUnits.map((u) => <option key={u.id} value={u.id}>{u.name} (${u.rentAmount}/mo)</option>)}
-          </select>
-          {selectedPropertyId && availableUnits.length === 0 && (
-            <p className="text-xs text-amber-600 mt-1">No vacant units in this property.</p>
-          )}
-        </div>
-      </div>
-
-      {/* Step 3: Dates & financials */}
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="label">Start date *</label>
-          <input type="date" className="input" value={form.startDate} onChange={(e) => setForm((f) => ({ ...f, startDate: e.target.value }))} required />
-        </div>
-        <div>
-          <label className="label">End date *</label>
-          <input type="date" className="input" value={form.endDate} onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))} required />
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="label">Monthly rent ($) *</label>
-          <input type="number" min="1" className="input" value={form.monthlyRent} onChange={(e) => setForm((f) => ({ ...f, monthlyRent: e.target.value }))} required />
-        </div>
-        <div>
-          <label className="label">Deposit ($) *</label>
-          <input type="number" min="0" className="input" value={form.deposit} onChange={(e) => setForm((f) => ({ ...f, deposit: e.target.value }))} required />
-        </div>
-      </div>
-      <div>
-        <label className="label">Notes (optional)</label>
-        <textarea rows={2} className="input resize-none" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
-      </div>
-
-      {formError && (
-        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{formError}</div>
-      )}
-
-      <div className="flex gap-3 justify-end pt-2">
-        <button type="button" className="btn-secondary" onClick={onCancel}>Cancel</button>
-        <button type="submit" className="btn-primary" disabled={submitting || !tenantLookup || !form.unitId}>
-          {submitting ? 'Creating...' : 'Create lease'}
-        </button>
-      </div>
-    </form>
+    <TenantLeaseForm
+      properties={properties}
+      tenants={tenants}
+      allowExistingTenant
+      onSuccess={onSuccess}
+      onCancel={onCancel}
+      submitLabel="Add tenant and create lease"
+    />
   );
 };
 

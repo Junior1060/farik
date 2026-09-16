@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Building2, Plus, Edit, Trash2, Home, X, Check } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Building2, Plus, Edit, Trash2, Home, X, Check, Upload } from 'lucide-react';
 import PageHeader from '../components/ui/PageHeader';
 import EmptyState from '../components/ui/EmptyState';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
@@ -10,6 +11,7 @@ import {
   createUnit, updateUnit, deleteUnit,
 } from '../services/propertyService';
 import { useForm } from 'react-hook-form';
+import { PROPERTY_TYPE_OPTIONS, propertyTypeLabel } from '../utils/propertyTypes';
 
 const PropertiesPage = () => {
   const { data, loading, error, refetch } = useFetch(getProperties);
@@ -21,14 +23,19 @@ const PropertiesPage = () => {
   const propForm = useForm();
 
   const onAddProperty = async (values) => {
-    await createProperty(values);
+    await createProperty({
+      ...values,
+      propertyType: values.propertyType || null,
+      unitCount: values.unitCount === '' || values.unitCount == null ? 0 : Number(values.unitCount),
+    });
     setAddPropertyOpen(false);
     propForm.reset();
     refetch();
   };
 
   const onEditProperty = async (values) => {
-    await updateProperty(editProperty.id, values);
+    const { unitCount: _unitCount, ...rest } = values;
+    await updateProperty(editProperty.id, { ...rest, propertyType: rest.propertyType || null });
     setEditProperty(null);
     refetch();
   };
@@ -47,6 +54,7 @@ const PropertiesPage = () => {
       city: property.city,
       state: property.state,
       zip: property.zip,
+      propertyType: property.propertyType || '',
       description: property.description || '',
     });
   };
@@ -59,7 +67,7 @@ const PropertiesPage = () => {
         title="Properties"
         description={`${properties.length} ${properties.length === 1 ? 'property' : 'properties'}`}
         action={
-          <button className="btn-primary" onClick={() => { propForm.reset(); setAddPropertyOpen(true); }}>
+          <button className="btn-primary" onClick={() => { propForm.reset({ unitCount: 1 }); setAddPropertyOpen(true); }}>
             <Plus size={16} /> Add property
           </button>
         }
@@ -68,7 +76,21 @@ const PropertiesPage = () => {
       {error && <div className="bg-red-50 text-red-700 px-4 py-3 rounded-xl text-sm mb-4">{error}</div>}
 
       {properties.length === 0 ? (
-        <EmptyState icon={Building2} title="No properties yet" description="Add your first property to get started." />
+        <EmptyState
+          icon={Building2}
+          title="No properties yet"
+          description="Add a property to start managing your rentals."
+          action={
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <button className="btn-primary justify-center" onClick={() => { propForm.reset({ unitCount: 1 }); setAddPropertyOpen(true); }}>
+                <Plus size={16} aria-hidden="true" /> Add property
+              </button>
+              <Link to="/import" className="btn-secondary justify-center">
+                <Upload size={16} aria-hidden="true" /> Import data
+              </Link>
+            </div>
+          }
+        />
       ) : (
         <div className="space-y-5">
           {properties.map((property) => {
@@ -84,7 +106,9 @@ const PropertiesPage = () => {
                     </div>
                     <div>
                       <p className="font-semibold text-slate-800">{property.name}</p>
-                      <p className="text-xs text-slate-400">{property.address}, {property.city}, {property.state} {property.zip}</p>
+                      <p className="text-xs text-slate-400">
+                        {propertyTypeLabel(property.propertyType) ? `${propertyTypeLabel(property.propertyType)} · ` : ''}{property.address}, {property.city}, {property.state} {property.zip}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
@@ -114,7 +138,7 @@ const PropertiesPage = () => {
 
       {/* Add Property Modal */}
       <Modal open={addPropertyOpen} onClose={() => setAddPropertyOpen(false)} title="Add property">
-        <PropertyForm form={propForm} onSubmit={onAddProperty} onCancel={() => setAddPropertyOpen(false)} />
+        <PropertyForm form={propForm} onSubmit={onAddProperty} onCancel={() => setAddPropertyOpen(false)} isCreate />
       </Modal>
 
       {/* Edit Property Modal */}
@@ -250,7 +274,11 @@ const UnitsSection = ({ property, onRefetch, compact = false }) => {
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="text-right">
-                    <p className="text-sm font-bold text-slate-800">${unit.rentAmount.toLocaleString()}<span className="font-normal text-slate-400 text-xs">/mo</span></p>
+                    {unit.rentAmount > 0 ? (
+                      <p className="text-sm font-bold text-slate-800">${unit.rentAmount.toLocaleString()}<span className="font-normal text-slate-400 text-xs">/mo</span></p>
+                    ) : (
+                      <p className="text-xs text-slate-400">Rent not set</p>
+                    )}
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${unit.isOccupied ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
                       {unit.isOccupied ? 'Occupied' : 'Vacant'}
                     </span>
@@ -312,7 +340,7 @@ const UnitsSection = ({ property, onRefetch, compact = false }) => {
 };
 
 /* ── Property form ── */
-const PropertyForm = ({ form, onSubmit, onCancel, submitLabel = 'Add property' }) => {
+const PropertyForm = ({ form, onSubmit, onCancel, submitLabel = 'Add property', isCreate = false }) => {
   const { register, handleSubmit, formState: { isSubmitting, errors } } = form;
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -337,6 +365,31 @@ const PropertyForm = ({ form, onSubmit, onCancel, submitLabel = 'Add property' }
           <label className="label">Postal code *</label>
           <input className="input" placeholder="S4S 4H4" {...register('zip', { required: true })} />
         </div>
+      </div>
+      <div className={isCreate ? 'grid grid-cols-1 sm:grid-cols-2 gap-3' : ''}>
+        <div>
+          <label className="label" htmlFor="property-form-type">Property type (optional)</label>
+          <select id="property-form-type" className="input" {...register('propertyType')}>
+            <option value="">Choose one</option>
+            {PROPERTY_TYPE_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </div>
+        {isCreate && (
+          <div>
+            <label className="label" htmlFor="property-form-units">Number of units</label>
+            <input
+              id="property-form-units"
+              type="number"
+              min="0"
+              max="500"
+              step="1"
+              className={`input ${errors.unitCount ? 'border-red-300' : ''}`}
+              {...register('unitCount', { min: { value: 0, message: 'Cannot be negative' }, max: { value: 500, message: 'Up to 500 at a time' } })}
+            />
+            <p className="text-xs text-slate-500 mt-1.5">One unit is named Main; more are Unit 1, Unit 2… You can rename them.</p>
+            {errors.unitCount && <p className="text-xs text-red-600 mt-1">{errors.unitCount.message}</p>}
+          </div>
+        )}
       </div>
       <div>
         <label className="label">Description (optional)</label>

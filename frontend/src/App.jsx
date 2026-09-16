@@ -7,7 +7,8 @@ import LoadingSpinner from './components/ui/LoadingSpinner';
 // Pages
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
+import SignupPage from './pages/SignupPage';
+import OnboardingPage from './pages/OnboardingPage';
 import DashboardPage from './pages/DashboardPage';
 import TenantsPage from './pages/TenantsPage';
 import LeasesPage from './pages/LeasesPage';
@@ -21,24 +22,30 @@ import PropertiesPage from './pages/PropertiesPage';
 import ProfilePage from './pages/ProfilePage';
 import PaymentSuccessPage from './pages/PaymentSuccessPage';
 import AutopilotPage from './pages/AutopilotPage';
-import PilotApplicationsPage from './pages/PilotApplicationsPage';
 import ImportPage from './pages/ImportPage';
 import PrivacyPage from './pages/PrivacyPage';
 import TermsPage from './pages/TermsPage';
 import SmsConsentPage from './pages/SmsConsentPage';
 
+/** Where a signed-in user belongs by default. */
+export const homeFor = (user) => (user.role === 'LANDLORD' ? '/dashboard' : '/tenant');
+
 const ProtectedRoute = ({ children, role }) => {
   const { user, loading } = useAuth();
   if (loading) return <LoadingSpinner fullScreen />;
   if (!user) return <Navigate to="/login" replace />;
-  if (role && user.role !== role) {
-    return <Navigate to={user.role === 'LANDLORD' ? '/dashboard' : '/tenant'} replace />;
-  }
+  if (role && user.role !== role) return <Navigate to={homeFor(user)} replace />;
   return children;
 };
 
+/** Login/signup are for signed-out visitors; a signed-in user is sent home. */
+const PublicOnly = ({ children }) => {
+  const { user } = useAuth();
+  return user ? <Navigate to={homeFor(user)} replace /> : children;
+};
+
 export default function App() {
-  const { user, loading } = useAuth();
+  const { loading } = useAuth();
 
   if (loading) return <LoadingSpinner fullScreen />;
 
@@ -48,8 +55,24 @@ export default function App() {
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route path="/terms" element={<TermsPage />} />
       <Route path="/sms-consent" element={<SmsConsentPage />} />
-      <Route path="/login" element={user ? <Navigate to={user.role === 'LANDLORD' ? '/dashboard' : '/tenant'} replace /> : <LoginPage />} />
-      <Route path="/register" element={user ? <Navigate to={user.role === 'LANDLORD' ? '/dashboard' : '/tenant'} replace /> : <RegisterPage />} />
+
+      <Route path="/login" element={<PublicOnly><LoginPage /></PublicOnly>} />
+      <Route path="/signup" element={<PublicOnly><SignupPage role="LANDLORD" /></PublicOnly>} />
+      {/* Tenants activate an account a landlord created for them. Same form, tenant role. */}
+      <Route path="/signup/tenant" element={<PublicOnly><SignupPage role="TENANT" /></PublicOnly>} />
+      {/* Path from before self-serve signup; old links and bookmarks still work. */}
+      <Route path="/register" element={<Navigate to="/signup" replace />} />
+
+      {/* First-run setup for a new landlord. Protected, but outside the app shell
+          so the flow stays focused. Every step links out to /dashboard. */}
+      <Route
+        path="/onboarding"
+        element={
+          <ProtectedRoute role="LANDLORD">
+            <OnboardingPage />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Landlord routes */}
       <Route
@@ -76,11 +99,6 @@ export default function App() {
         <Route path="/agent" element={<Navigate to="/autopilot" replace />} />
         <Route path="/timeline" element={<Navigate to="/autopilot?tab=activity" replace />} />
         <Route path="/import" element={<ImportPage />} />
-        {/* Farik staff only. The route is reachable by any signed-in landlord,
-            but the API returns 403 unless the account is on ADMIN_EMAILS, and
-            the page renders an access notice in that case. Server-side is the
-            real boundary — this is not hidden-URL security. */}
-        <Route path="/admin/pilot-applications" element={<PilotApplicationsPage />} />
       </Route>
 
       <Route path="/payment/success" element={<PaymentSuccessPage />} />

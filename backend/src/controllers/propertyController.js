@@ -1,14 +1,30 @@
 const { z } = require('zod');
 const prisma = require('../lib/prisma');
 
+const PROPERTY_TYPES = ['SINGLE_FAMILY', 'MULTI_FAMILY', 'CONDO', 'TOWNHOUSE', 'OTHER'];
+
 const propertySchema = z.object({
-  name: z.string().min(1),
-  address: z.string().min(1),
-  city: z.string().min(1),
-  state: z.string().min(1),
-  zip: z.string().min(1),
-  description: z.string().optional(),
+  name: z.string().trim().min(1).max(120),
+  address: z.string().trim().min(1).max(200),
+  city: z.string().trim().min(1).max(100),
+  state: z.string().trim().min(1).max(60),
+  zip: z.string().trim().min(1).max(20),
+  propertyType: z.enum(PROPERTY_TYPES).optional().nullable(),
+  description: z.string().max(2000).optional(),
 });
+
+// Onboarding lets a landlord say "this building has 4 units" before they know
+// anything else about them. A single-unit property gets one unit called "Main";
+// larger ones get Unit 1..N. Names and rents are editable from the Properties page,
+// and the rent is set when a lease is created.
+const MAX_PLACEHOLDER_UNITS = 500;
+const createPropertySchema = propertySchema.extend({
+  unitCount: z.coerce.number().int().min(0).max(MAX_PLACEHOLDER_UNITS).optional(),
+});
+
+const placeholderUnits = (count) => (count === 1
+  ? [{ name: 'Main', rentAmount: 0 }]
+  : Array.from({ length: count }, (_, i) => ({ name: `Unit ${i + 1}`, rentAmount: 0 })));
 
 const unitSchema = z.object({
   name: z.string().min(1),
@@ -36,10 +52,14 @@ const getAll = async (req, res, next) => {
 const create = async (req, res, next) => {
   try {
     const landlordId = req.user.landlordProfile.id;
-    const data = propertySchema.parse(req.body);
+    const { unitCount = 0, ...data } = createPropertySchema.parse(req.body);
     const property = await prisma.property.create({
-      data: { ...data, landlordId },
-      include: { units: true },
+      data: {
+        ...data,
+        landlordId,
+        ...(unitCount > 0 ? { units: { create: placeholderUnits(unitCount) } } : {}),
+      },
+      include: { units: { orderBy: { name: 'asc' } } },
     });
     res.status(201).json({ property });
   } catch (err) {
@@ -120,4 +140,4 @@ const removeUnit = async (req, res, next) => {
   }
 };
 
-module.exports = { getAll, create, update, remove, createUnit, updateUnit, removeUnit };
+module.exports = { getAll, create, update, remove, createUnit, updateUnit, removeUnit, PROPERTY_TYPES };
