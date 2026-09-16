@@ -13,7 +13,7 @@ describe('LandingPage', () => {
     const h1 = screen.getByRole('heading', { level: 1 });
     expect(h1).toHaveTextContent('Property management without the busywork.');
     expect(screen.getByText(/manage tenants, leases, rent, maintenance, notices, and communication from one place/i)).toBeInTheDocument();
-    expect(screen.getByText(/The AI property manager for independent landlords/i)).toBeInTheDocument();
+    expect(screen.queryByText(/The AI property manager for independent landlords/i)).toBeNull();
   });
 
   it('renders Get Started and sends every instance straight to /signup, never an anchor or a form', () => {

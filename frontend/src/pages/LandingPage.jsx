@@ -218,9 +218,6 @@ const LandingPage = () => (
     <main id="main">
       {/* Hero */}
       <section className="max-w-6xl mx-auto px-4 sm:px-6 pt-16 sm:pt-24 pb-10 sm:pb-14 text-center" aria-labelledby="hero-title">
-        <p className="inline-flex items-center gap-2 bg-brand-50 text-brand-700 text-xs font-medium px-3 py-1.5 rounded-full border border-brand-200 mb-6">
-          The AI property manager for independent landlords
-        </p>
         <h1 id="hero-title" className="text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight leading-[1.08] max-w-4xl mx-auto">
           Property management without the busywork.
         </h1>
