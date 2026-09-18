@@ -130,3 +130,126 @@ describe('triageMaintenanceRequest', () => {
     expect(escalationCalls).toHaveLength(0);
   });
 });
+
+// The web portal shows the agent's reply in the conversation thread, but a tenant who
+// texted in only ever sees SMS. These cover the reply leg back to that channel.
+describe('handleTenantMessage — SMS reply leg', () => {
+  const TENANT_PHONE = '+15551234567';
+
+  function outboundSms() {
+    return mockPrisma.smsMessage.create.mock.calls
+      .map((c) => c[0].data)
+      .filter((d) => d.direction === 'OUTBOUND');
+  }
+
+  beforeEach(() => {
+    mockPrisma.conversation.findUnique.mockResolvedValue({
+      id: 'conv-1',
+      participants: [{
+        tenant: {
+          id: 'tenant-1', firstName: 'Alice', lastName: 'Morgan',
+          leases: [{
+            status: 'ACTIVE',
+            unit: {
+              id: 'unit-1', name: 'Unit 2B',
+              property: { id: 'prop-1', name: 'Maple Court', landlord: { id: 'landlord-1', userId: 'user-1', user: { email: 'll@example.com' } } },
+            },
+          }],
+        },
+      }],
+    });
+    mockPrisma.agentConfig.findUnique.mockResolvedValue({ isEnabled: true, autoMessages: true });
+    mockPrisma.agentPolicyOverride.findUnique.mockResolvedValue(null);
+    mockPrisma.agentPolicyDefault.findUnique.mockResolvedValue({ trustLevel: 'OPERATE_WITHIN_POLICY', settings: {} });
+    mockPrisma.payment.findFirst.mockResolvedValue(null);
+    mockPrisma.message.create.mockResolvedValue({ id: 'msg-1' });
+    mockPrisma.agentLog.create.mockResolvedValue({ id: 'log-1' });
+    mockPrisma.landlordProfile.findUnique.mockResolvedValue({ id: 'landlord-1', userId: 'user-1', user: { email: 'll@example.com' } });
+    mockPrisma.notification.create.mockResolvedValue({});
+    mockPrisma.smsMessage.create.mockResolvedValue({});
+    mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: null });
+  });
+
+  const message = { id: 'msg-1', body: 'When is my rent due?' };
+
+  it('texts a high-confidence auto-response back to a tenant who reached us by SMS', async () => {
+    aiClient.setMockHandler(() => JSON.stringify({
+      category: 'PAYMENT_QUESTION', confidence: 'HIGH', requiresEscalation: false,
+      autoResponse: 'Your rent is due on the 1st of each month.',
+      escalationSummary: null, draftResponse: null, reason: 'routine question',
+    }));
+
+    await agentService.handleTenantMessage(message, 'conv-1', { smsReplyTo: TENANT_PHONE });
+
+    const sent = outboundSms();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toBe('Your rent is due on the 1st of each month.');
+    expect(sent[0].phoneNumber).toBe(TENANT_PHONE);
+    // The conversation record is still written — SMS is an additional channel, not a swap.
+    expect(mockPrisma.message.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ body: 'Your rent is due on the 1st of each month.' }) }),
+    );
+  });
+
+  it('sends a holding text when the message escalates, so the tenant is not left in silence', async () => {
+    aiClient.setMockHandler(() => JSON.stringify({
+      category: 'CHARGE_DISPUTE', confidence: 'HIGH', requiresEscalation: true,
+      autoResponse: null, escalationSummary: 'Disputes a late fee',
+      draftResponse: 'We will look into it.', reason: 'billing dispute',
+    }));
+
+    await agentService.handleTenantMessage(message, 'conv-1', { smsReplyTo: TENANT_PHONE });
+
+    const sent = outboundSms();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toMatch(/passed this to your property manager/i);
+    // The tenant is told someone will follow up — never given a made-up answer.
+    expect(sent[0].body).not.toMatch(/late fee/i);
+  });
+
+  it('sends nothing over SMS for a web-portal message, which passes no reply channel', async () => {
+    aiClient.setMockHandler(() => JSON.stringify({
+      category: 'PAYMENT_QUESTION', confidence: 'HIGH', requiresEscalation: false,
+      autoResponse: 'Your rent is due on the 1st of each month.',
+      escalationSummary: null, draftResponse: null, reason: 'routine question',
+    }));
+
+    await agentService.handleTenantMessage(message, 'conv-1');
+
+    expect(outboundSms()).toHaveLength(0);
+    expect(mockPrisma.message.create).toHaveBeenCalled();
+  });
+
+  // The exact production failure this was found by: an invalid ANTHROPIC_API_KEY made the
+  // agent throw, the error was logged, and the tenant who texted in got nothing back.
+  it('still sends a holding text when the agent itself fails, rather than going silent', async () => {
+    aiClient.setMockHandler(() => { throw new Error('401 authentication_error: API key is invalid.'); });
+
+    await agentService.handleTenantMessage(message, 'conv-1', { smsReplyTo: TENANT_PHONE });
+
+    const sent = outboundSms();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toMatch(/passed this to your property manager/i);
+  });
+
+  it('stays silent on an agent failure for a web-portal message, which has no SMS channel', async () => {
+    aiClient.setMockHandler(() => { throw new Error('401 authentication_error: API key is invalid.'); });
+
+    await agentService.handleTenantMessage(message, 'conv-1');
+
+    expect(outboundSms()).toHaveLength(0);
+  });
+
+  it('does not text a tenant who has opted out, even on the SMS path', async () => {
+    mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: new Date() });
+    aiClient.setMockHandler(() => JSON.stringify({
+      category: 'PAYMENT_QUESTION', confidence: 'HIGH', requiresEscalation: false,
+      autoResponse: 'Your rent is due on the 1st of each month.',
+      escalationSummary: null, draftResponse: null, reason: 'routine question',
+    }));
+
+    await agentService.handleTenantMessage(message, 'conv-1', { smsReplyTo: TENANT_PHONE });
+
+    expect(outboundSms()).toHaveLength(0);
+  });
+});

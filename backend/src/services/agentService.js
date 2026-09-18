@@ -3,6 +3,12 @@ const escalationService = require('./escalationService');
 const policyEngine = require('./policyEngine');
 const { callAndValidate, AiValidationError } = require('./ai/validate');
 const { messageClassificationSchema, maintenanceTriageSchema } = require('./ai/schemas');
+const { getSmsProvider } = require('./sms/smsProvider');
+
+// Sent when a texted-in message is handed to the landlord instead of auto-answered, so a
+// tenant who reached us by SMS is never left with silence on a channel that looks dead.
+const ESCALATION_HOLDING_SMS = 'Thanks — we have passed this to your property manager and '
+  + 'they will follow up with you directly.';
 
 const SYSTEM_PROMPT = `You are Farik AI, an autonomous property management assistant. You help landlords manage rental properties by handling routine tasks automatically.
 
@@ -28,7 +34,11 @@ async function logAction({ landlordId, actionType, confidence, summary, details,
   });
 }
 
-async function handleTenantMessage(message, conversationId) {
+async function handleTenantMessage(message, conversationId, { smsReplyTo } = {}) {
+  // Assigned for real once the tenant is known. Until then — and on the web-portal path,
+  // which passes no smsReplyTo — it stays a no-op, so the catch at the bottom can call it
+  // without caring how far this got.
+  let replyBySms = async () => {};
   try {
     const conversation = await prisma.conversation.findUnique({
       where: { id: conversationId },
@@ -55,6 +65,18 @@ async function handleTenantMessage(message, conversationId) {
     const tenant = conversation.participants[0].tenant;
     const activeLease = tenant.leases?.[0];
     if (!activeLease) return;
+
+    // Replies only go out over SMS when the tenant reached us that way; the web portal
+    // path passes no smsReplyTo and behaves exactly as before. sendSms is given tenantId
+    // so optOutGuard still applies, and a failure here must never lose the DB work above.
+    replyBySms = async (body) => {
+      if (!smsReplyTo) return;
+      try {
+        await getSmsProvider().sendSms({ to: smsReplyTo, body, tenantId: tenant.id });
+      } catch (err) {
+        console.error('[Agent] SMS reply failed:', err.message);
+      }
+    };
 
     const landlord = activeLease.unit.property.landlord;
     const config = await getOrCreateConfig(landlord.id);
@@ -122,6 +144,7 @@ Return JSON:
           entityType: 'conversation',
           entityId: conversationId,
         });
+        await replyBySms(ESCALATION_HOLDING_SMS);
         return;
       }
       throw err;
@@ -164,6 +187,7 @@ Return JSON:
         entityType: 'conversation',
         entityId: conversationId,
       });
+      await replyBySms(ESCALATION_HOLDING_SMS);
       return;
     }
 
@@ -172,6 +196,7 @@ Return JSON:
         data: { conversationId, senderId: landlord.userId, body: result.autoResponse },
       });
       await prisma.conversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
+      await replyBySms(result.autoResponse);
       await logAction({
         landlordId: landlord.id,
         actionType: 'MESSAGE_RESPONSE',
@@ -200,9 +225,14 @@ Return JSON:
         entityId: conversationId,
         status: 'ESCALATED',
       });
+      await replyBySms(ESCALATION_HOLDING_SMS);
     }
   } catch (err) {
     console.error('[Agent] handleTenantMessage error:', err.message);
+    // An AI outage or a bad API key must not leave a texted-in tenant staring at a dead
+    // channel. They get the same holding message an escalation sends; the landlord still
+    // has the inbound row and this log to work from.
+    await replyBySms(ESCALATION_HOLDING_SMS);
   }
 }
 

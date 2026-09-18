@@ -15,6 +15,9 @@ function createMockPrisma() {
     notification: { create: jest.fn() },
     agentPolicyOverride: { findUnique: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn() },
     agentPolicyDefault: { findUnique: jest.fn(), upsert: jest.fn() },
+    // Reached through the SMS provider when the agent replies to a texted-in message.
+    smsMessage: { create: jest.fn(), findFirst: jest.fn() },
+    tenantProfile: { findUnique: jest.fn() },
   };
 }
 

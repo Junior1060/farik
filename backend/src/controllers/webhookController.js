@@ -177,7 +177,9 @@ async function handleInboundSms(req, res, next) {
       conversation = await prisma.conversation.create({ data: { participants: { create: { tenantId: tenant.id } } } });
     }
     const message = await prisma.message.create({ data: { conversationId: conversation.id, senderId: tenant.userId, body } });
-    agentService.handleTenantMessage(message, conversation.id)
+    // The tenant reached us by SMS, so the agent's reply goes back the same way rather
+    // than only into the web conversation they may never open.
+    agentService.handleTenantMessage(message, conversation.id, { smsReplyTo: from })
       .catch((err) => console.error('[Webhook] handleTenantMessage error:', err.message));
 
     return res.status(200).json({ received: true });

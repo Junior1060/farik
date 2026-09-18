@@ -59,7 +59,15 @@ Request handling order:
      `DIAGNOSTIC_QUESTIONS_SENT` → `maintenanceWorkflow.recordTenantReply()`.
    - **Tenant match**, no open diagnostic workflow → falls back to the existing
      `Conversation`/`Message` flow and `agentService.handleTenantMessage()`
-     (the same general-inquiry handling web-portal messages already use).
+     (the same general-inquiry handling web-portal messages already use). The
+     webhook passes `{ smsReplyTo }`, which is what makes the agent's answer go
+     back over SMS as well as into the conversation thread — a tenant who texted
+     in may never open the portal. A web-portal message passes no
+     `smsReplyTo` and is unchanged. An escalated message gets a short holding
+     text instead of an answer, and so does a message the agent could not handle
+     at all (an AI outage or a bad `ANTHROPIC_API_KEY`), so the channel never
+     just goes quiet; the `tenantId` on every such send keeps `optOutGuard` in
+     force.
    - **No match** → a generic "contact your property manager" reply is sent.
      Property or tenant details are never exposed before verification.
 
