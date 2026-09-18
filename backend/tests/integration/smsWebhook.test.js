@@ -514,6 +514,49 @@ describe('POST /api/webhooks/sms', () => {
       expect(escalations()).toHaveLength(0);
     });
 
+    // Found in production: an Anthropic billing error surfaced as `POST /api/webhooks/sms
+    // 400` with the provider's message in the response body. recordTenantReply saves the
+    // answer and then runs AI triage, and the controller awaited both halves.
+    it('returns 200 and keeps the provider error to itself when AI triage fails mid-diagnostic', async () => {
+      const wf = { id: 'wf-1', maintenanceRequestId: 'req-1', state: 'DIAGNOSTIC_QUESTIONS_SENT', category: 'PLUMBING_LEAK', diagnosticAnswers: null };
+      mockPrisma.maintenanceWorkflow.findFirst.mockResolvedValue(wf);
+      wireStatefulWorkflow(wf);
+      mockPrisma.maintenanceRequest.findUnique.mockResolvedValue({
+        id: 'req-1', title: 'Leak', description: 'Water under the sink',
+        tenant: { id: 'tenant-1', firstName: 'Alice', lastName: 'Morgan', phone: '+15551234567', smsConsent: true },
+        unit: { id: 'unit-1', name: 'Unit 2B', property: { id: 'prop-1', name: 'Maple Court', landlord: { id: 'landlord-1' } } },
+      });
+      const billingError = Object.assign(
+        new Error('Your credit balance is too low to access the Anthropic API.'),
+        { status: 400 },
+      );
+      aiClient.setMockHandler(() => { throw billingError; });
+
+      const res = await textIn('yes it is still leaking');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ received: true });
+      // The provider's wording must never reach an external caller.
+      expect(JSON.stringify(res.body)).not.toMatch(/credit balance/i);
+      // And the tenant hears something true: their answer is saved, do not resend.
+      const bodies = outbound().map((d) => d.body);
+      expect(bodies.some((b) => /saved your answer/i.test(b))).toBe(true);
+      expect(bodies.some((b) => /No need to resend/i.test(b))).toBe(true);
+    });
+
+    it('returns 200 when vendor reply handling throws', async () => {
+      mockPrisma.tenantProfile.findMany.mockResolvedValue([]);
+      mockPrisma.vendor.findMany.mockResolvedValue([{ id: 'vendor-1', phone: '+15559998888' }]);
+      mockPrisma.vendorContactAttempt.findFirst.mockRejectedValue(new Error('db exploded'));
+
+      const res = await request(buildApp())
+        .post('/api/webhooks/sms')
+        .type('form')
+        .send({ From: '+15559998888', Body: 'YES', MessageSid: 'SM-vendor-fail' });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ received: true });
+    });
     it('still routes a mid-diagnostic reply to the workflow, not the intent classifier', async () => {
       // "yes" would otherwise look like a low-information message worth clarifying.
       const wf = { id: 'wf-1', maintenanceRequestId: 'req-1', state: 'DIAGNOSTIC_QUESTIONS_SENT', category: 'PLUMBING_LEAK', diagnosticAnswers: null };

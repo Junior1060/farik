@@ -58,6 +58,12 @@ const REPLY = {
   TEMPORARY_FAILURE: 'Sorry — I could not process that just now. Please try again in a few '
     + 'minutes, or reply HELP for options.',
 
+  // A diagnostic answer that was saved but could not be reviewed. Distinct from
+  // TEMPORARY_FAILURE because the tenant's reply is safely recorded — asking them to
+  // resend would only duplicate it.
+  DIAGNOSTIC_DEFERRED: 'Thanks — I have saved your answer. I could not finish reviewing it '
+    + 'just now, so this may take a little longer than usual. No need to resend.',
+
   // Carrier-expected response to the HELP keyword.
   HELP: 'Farik property assistant. Text us about maintenance, rent or your lease and we will '
     + 'help or pass it to your property manager. Reply STOP to opt out. Msg & data rates may apply.',

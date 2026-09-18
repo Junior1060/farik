@@ -220,7 +220,13 @@ async function handleInboundSms(req, res, next) {
     });
 
     if (vendor) {
-      await handleVendorReply(vendor, body);
+      // Same reasoning as the diagnostic branch below: the reply is recorded, so a failure
+      // in the dispatch machinery is ours to log, not Twilio's to retry.
+      try {
+        await handleVendorReply(vendor, body);
+      } catch (err) {
+        console.error('[Webhook] vendor reply handling failed:', err.message);
+      }
       return res.status(200).json({ received: true });
     }
 
@@ -281,7 +287,18 @@ async function handleInboundSms(req, res, next) {
     });
 
     if (openWorkflow) {
-      await maintenanceWorkflow.recordTenantReply(openWorkflow.id, body);
+      // recordTenantReply saves the answer and then runs AI triage. A provider failure in
+      // that second half must not become a non-2xx for Twilio: the inbound message is
+      // already durably recorded above, so "received" is the truthful response, and an
+      // upstream provider's error text has no business being returned to an external
+      // caller — the shared error handler passes 4xx messages through on the assumption
+      // that we raised them ourselves, which is not true of a relayed one.
+      try {
+        await maintenanceWorkflow.recordTenantReply(openWorkflow.id, body);
+      } catch (err) {
+        console.error('[Webhook] diagnostic reply handling failed:', err.message);
+        await provider.sendSms({ to: from, body: REPLY.DIAGNOSTIC_DEFERRED, tenantId: tenant.id });
+      }
       return res.status(200).json({ received: true });
     }
 
