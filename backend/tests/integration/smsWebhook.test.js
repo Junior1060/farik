@@ -10,7 +10,9 @@ const mockPrisma = {
   vendorContactAttempt: { findFirst: jest.fn(), update: jest.fn(), count: jest.fn(), findMany: jest.fn(), create: jest.fn() },
   conversation: { findFirst: jest.fn(), create: jest.fn() },
   message: { create: jest.fn() },
-  maintenanceRequest: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+  maintenanceRequest: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
+  lease: { findFirst: jest.fn() },
+  escalation: { create: jest.fn() },
   workflowEvent: { create: jest.fn() },
   landlordProfile: { findUnique: jest.fn() },
   agentLog: { create: jest.fn() },
@@ -62,6 +64,15 @@ beforeEach(() => {
   mockPrisma.vendorContactAttempt.create.mockResolvedValue({ id: 'attempt-1' });
   mockPrisma.appointment.create.mockResolvedValue({ id: 'appt-1' });
   mockPrisma.maintenanceRequest.updateMany.mockResolvedValue({ count: 1 }); // status projection
+  mockPrisma.lease.findFirst.mockResolvedValue({
+    id: 'lease-1',
+    unitId: 'unit-1',
+    unit: { id: 'unit-1', name: 'Unit 2B', property: { id: 'prop-1', name: 'Maple Court', landlordId: 'landlord-1' } },
+  });
+  mockPrisma.maintenanceRequest.create.mockResolvedValue({
+    id: 'req-1',
+    unit: { id: 'unit-1', name: 'Unit 2B', property: { id: 'prop-1', name: 'Maple Court', landlordId: 'landlord-1' } },
+  });
 });
 
 afterEach(() => {
@@ -287,7 +298,7 @@ describe('POST /api/webhooks/sms', () => {
     const res = await request(app)
       .post('/api/webhooks/sms')
       .type('form')
-      .send({ From: '+15551234567', Body: 'my sink is leaking', MessageSid: 'SM7' });
+      .send({ From: '+15551234567', Body: 'I want to dispute the cleaning fee you charged me last month', MessageSid: 'SM7' });
 
     expect(res.status).toBe(200);
     const outbound = mockPrisma.smsMessage.create.mock.calls
@@ -297,7 +308,7 @@ describe('POST /api/webhooks/sms', () => {
     expect(outbound[0].body).toMatch(/Reply YES/);
     // The tenant's actual message is never swallowed by the consent prompt.
     expect(mockPrisma.message.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ body: 'my sink is leaking' }) }),
+      expect.objectContaining({ data: expect.objectContaining({ body: 'I want to dispute the cleaning fee you charged me last month' }) }),
     );
   });
 
@@ -313,7 +324,7 @@ describe('POST /api/webhooks/sms', () => {
     const res = await request(app)
       .post('/api/webhooks/sms')
       .type('form')
-      .send({ From: '+15551234567', Body: 'still leaking', MessageSid: 'SM8' });
+      .send({ From: '+15551234567', Body: 'I still want to dispute that cleaning fee you charged me', MessageSid: 'SM8' });
 
     expect(res.status).toBe(200);
     const outbound = mockPrisma.smsMessage.create.mock.calls
@@ -326,6 +337,7 @@ describe('POST /api/webhooks/sms', () => {
     mockPrisma.tenantProfile.findMany.mockResolvedValue([
       { id: 'tenant-1', userId: 'user-1', phone: '+15551234567', smsConsent: false, smsOptOutAt: new Date() },
     ]);
+    mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: new Date() }); // what optOutGuard re-reads
     mockPrisma.maintenanceWorkflow.findFirst.mockResolvedValue(null);
     mockPrisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
     const app = buildApp();
@@ -341,5 +353,191 @@ describe('POST /api/webhooks/sms', () => {
       .map((c) => c[0].data)
       .filter((d) => d.direction === 'OUTBOUND');
     expect(outbound).toHaveLength(0);
+  });
+
+  // Intent routing. The rule these all serve: escalation means a person genuinely has to
+  // take over, not that the classifier was unsure. Greetings and vague messages get
+  // answered; only a real handoff is ever described as one.
+  describe('intent routing', () => {
+    const TENANT = { id: 'tenant-1', userId: 'user-1', phone: '+15551234567', smsConsent: true, smsOptOutAt: null };
+
+    function outbound() {
+      return mockPrisma.smsMessage.create.mock.calls
+        .map((c) => c[0].data)
+        .filter((d) => d.direction === 'OUTBOUND');
+    }
+
+    // An escalation is an agentLog row with status ESCALATED plus a landlord notification.
+    function escalations() {
+      return mockPrisma.agentLog.create.mock.calls
+        .map((c) => c[0].data)
+        .filter((d) => d.status === 'ESCALATED');
+    }
+
+    async function textIn(body, sid = 'SM-intent') {
+      return request(buildApp())
+        .post('/api/webhooks/sms')
+        .type('form')
+        .send({ From: '+15551234567', Body: body, MessageSid: sid });
+    }
+
+    beforeEach(() => {
+      mockPrisma.tenantProfile.findMany.mockResolvedValue([{ ...TENANT, firstName: 'Alice', lastName: 'Morgan' }]);
+      mockPrisma.maintenanceWorkflow.findFirst.mockResolvedValue(null);
+      mockPrisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+      mockPrisma.smsMessage.findFirst.mockResolvedValue(null);
+      mockPrisma.landlordProfile.findUnique.mockResolvedValue({ id: 'landlord-1', userId: 'll-user-1', user: { email: 'll@example.com' } });
+      mockPrisma.agentLog.create.mockResolvedValue({ id: 'log-1' });
+    });
+
+    it('answers "Hello" as a greeting without creating a request, an escalation or a landlord ping', async () => {
+      const res = await textIn('Hello');
+
+      expect(res.status).toBe(200);
+      expect(outbound()).toHaveLength(1);
+      expect(outbound()[0].body).toMatch(/This is Farik, your property management assistant/);
+      expect(escalations()).toHaveLength(0);
+      expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+      expect(mockPrisma.maintenanceRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('asks "What\'s that?" to clarify rather than escalating', async () => {
+      const res = await textIn("What's that?");
+
+      expect(res.status).toBe(200);
+      expect(outbound()[0].body).toMatch(/Tell me what you need help with/);
+      expect(escalations()).toHaveLength(0);
+      expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+    });
+
+    it('asks "Can you help me?" to clarify rather than escalating', async () => {
+      const res = await textIn('Can you help me?');
+
+      expect(res.status).toBe(200);
+      expect(outbound()[0].body).toMatch(/Tell me what you need help with/);
+      expect(escalations()).toHaveLength(0);
+      expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+    });
+
+    it('opens a maintenance request for "My sink is leaking", against the unit on the active lease', async () => {
+      const res = await textIn('My sink is leaking');
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.maintenanceRequest.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            tenantId: 'tenant-1',
+            unitId: 'unit-1', // from the lease, never guessed from the phone number
+            description: 'My sink is leaking',
+            status: 'OPEN',
+          }),
+        }),
+      );
+      // This tenant can receive SMS, so the workflow does the talking — no duplicate ack.
+      expect(outbound()).toHaveLength(0);
+    });
+
+    it('acknowledges a repair itself when the workflow has no SMS channel to the tenant', async () => {
+      mockPrisma.tenantProfile.findMany.mockResolvedValue([
+        { ...TENANT, firstName: 'Alice', lastName: 'Morgan', smsConsent: false },
+      ]);
+
+      const res = await textIn('My sink is leaking');
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.maintenanceRequest.create).toHaveBeenCalled();
+      const bodies = outbound().map((d) => d.body);
+      expect(bodies.some((b) => /logged this repair request/i.test(b))).toBe(true);
+    });
+
+    it('sends "When is my rent due?" to the AI, which is the only path with the lease data', async () => {
+      const res = await textIn('When is my rent due?');
+
+      expect(res.status).toBe(200);
+      // Recorded in the conversation and handed to the classifier rather than answered
+      // from a canned string that could state a wrong date.
+      expect(mockPrisma.message.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ body: 'When is my rent due?' }) }),
+      );
+      expect(mockPrisma.maintenanceRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('escalates "I need to talk to my landlord" and only then promises a handoff', async () => {
+      const res = await textIn('I need to talk to my landlord');
+
+      expect(res.status).toBe(200);
+      expect(escalations()).toHaveLength(1);
+      expect(escalations()[0].summary).toMatch(/asked to speak to a person/i);
+      expect(mockPrisma.notification.create).toHaveBeenCalled();
+      expect(outbound()[0].body).toMatch(/passed this to your property manager/i);
+    });
+
+    it('never promises a handoff when the escalation could not be recorded', async () => {
+      // createEscalation returns null when the landlord row is missing — nothing recorded.
+      mockPrisma.landlordProfile.findUnique.mockResolvedValue(null);
+
+      const res = await textIn('I need to talk to my landlord');
+
+      expect(res.status).toBe(200);
+      expect(escalations()).toHaveLength(0);
+      expect(outbound()[0].body).toMatch(/could not process that just now/i);
+      expect(outbound()[0].body).not.toMatch(/passed this to your property manager/i);
+    });
+
+    it('escalates a second unresolved message instead of asking the same question again', async () => {
+      // A clarification already went out inside the window, so this is UNKNOWN, not another
+      // round of "tell me more".
+      mockPrisma.smsMessage.findFirst.mockResolvedValue({ id: 'prior-clarification' });
+
+      const res = await textIn('??');
+
+      expect(res.status).toBe(200);
+      expect(escalations()).toHaveLength(1);
+      expect(outbound()[0].body).toMatch(/passed this to your property manager/i);
+    });
+
+    it('treats an emergency as urgent maintenance rather than a routine repair', async () => {
+      const res = await textIn('I smell gas in the kitchen');
+
+      expect(res.status).toBe(200);
+      expect(mockPrisma.maintenanceRequest.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ description: 'I smell gas in the kitchen' }) }),
+      );
+    });
+
+    it('answers the HELP keyword without touching consent state', async () => {
+      const res = await textIn('HELP');
+
+      expect(res.status).toBe(200);
+      expect(outbound()[0].body).toMatch(/Reply STOP to opt out/);
+      expect(mockPrisma.tenantProfile.update).not.toHaveBeenCalled();
+      expect(escalations()).toHaveLength(0);
+    });
+
+    it('still routes a mid-diagnostic reply to the workflow, not the intent classifier', async () => {
+      // "yes" would otherwise look like a low-information message worth clarifying.
+      const wf = { id: 'wf-1', maintenanceRequestId: 'req-1', state: 'DIAGNOSTIC_QUESTIONS_SENT', category: 'PLUMBING_LEAK', diagnosticAnswers: null };
+      mockPrisma.maintenanceWorkflow.findFirst.mockResolvedValue(wf);
+      wireStatefulWorkflow(wf);
+      mockPrisma.maintenanceRequest.findUnique.mockResolvedValue({
+        id: 'req-1', title: 'Leak', description: 'Water under the sink',
+        tenant: { id: 'tenant-1', firstName: 'Alice', lastName: 'Morgan', phone: '+15551234567', smsConsent: true },
+        unit: { id: 'unit-1', name: 'Unit 2B', property: { id: 'prop-1', name: 'Maple Court', landlord: { id: 'landlord-1' } } },
+      });
+      aiClient.setMockHandler(() => JSON.stringify({
+        urgency: 'ROUTINE', confidence: 'HIGH', category: 'plumbing', priority: 'MEDIUM',
+        estimatedCostMin: 80, estimatedCostMax: 150, summary: 'Fix leak', reasoning: 'minor leak',
+      }));
+
+      const res = await textIn('yes it is still leaking');
+
+      expect(res.status).toBe(200);
+      // Not re-filed as a new repair, and never answered with "tell me what you need" —
+      // the reply belongs to the workflow that asked the question.
+      expect(mockPrisma.maintenanceRequest.create).not.toHaveBeenCalled();
+      const bodies = outbound().map((d) => d.body);
+      expect(bodies.some((b) => /Tell me what you need help with/i.test(b))).toBe(false);
+      expect(bodies.some((b) => /This is Farik, your property management assistant/i.test(b))).toBe(false);
+    });
   });
 });

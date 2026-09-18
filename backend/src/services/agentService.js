@@ -5,10 +5,10 @@ const { callAndValidate, AiValidationError } = require('./ai/validate');
 const { messageClassificationSchema, maintenanceTriageSchema } = require('./ai/schemas');
 const { getSmsProvider } = require('./sms/smsProvider');
 
-// Sent when a texted-in message is handed to the landlord instead of auto-answered, so a
-// tenant who reached us by SMS is never left with silence on a channel that looks dead.
-const ESCALATION_HOLDING_SMS = 'Thanks — we have passed this to your property manager and '
-  + 'they will follow up with you directly.';
+// Tenant-facing SMS copy lives in one place so the webhook router and this service cannot
+// drift apart on what they promise. ESCALATION_HOLDING is only ever sent where an
+// escalation row has actually been created just above it.
+const { REPLY } = require('./sms/inboundIntent');
 
 const SYSTEM_PROMPT = `You are Farik AI, an autonomous property management assistant. You help landlords manage rental properties by handling routine tasks automatically.
 
@@ -119,6 +119,15 @@ Classify this message. Escalation triggers requiring landlord input:
 - LEGAL_ESCALATION: message requires legal language or involves legal threats
 - TENANT_COMPLAINT: complaint about a neighbour or another tenant
 
+Answering rules:
+- Use ONLY the tenant, lease and payment values given above. Never invent, estimate or
+  guess a date, amount or balance that is not stated there.
+- If answering would need a value you were not given, say plainly which detail you do not
+  have and leave requiresEscalation false. A missing value is a gap to fill, not a dispute
+  for the landlord to settle.
+- Set requiresEscalation true only when a person genuinely has to act — the triggers
+  listed above. Being unsure is not, on its own, a reason to escalate.
+
 Return JSON:
 {
   "category": "PAYMENT_QUESTION" | "MAINTENANCE_STATUS" | "LEASE_QUESTION" | "GENERAL_INQUIRY" | "CHARGE_DISPUTE" | "LEASE_BREAK_REQUEST" | "LEGAL_ESCALATION" | "TENANT_COMPLAINT",
@@ -144,7 +153,7 @@ Return JSON:
           entityType: 'conversation',
           entityId: conversationId,
         });
-        await replyBySms(ESCALATION_HOLDING_SMS);
+        await replyBySms(REPLY.ESCALATION_HOLDING);
         return;
       }
       throw err;
@@ -187,7 +196,7 @@ Return JSON:
         entityType: 'conversation',
         entityId: conversationId,
       });
-      await replyBySms(ESCALATION_HOLDING_SMS);
+      await replyBySms(REPLY.ESCALATION_HOLDING);
       return;
     }
 
@@ -225,14 +234,17 @@ Return JSON:
         entityId: conversationId,
         status: 'ESCALATED',
       });
-      await replyBySms(ESCALATION_HOLDING_SMS);
+      // Low confidence is not the same as "a human must take over". Nothing was escalated
+      // here — only logged for the landlord — so the tenant is asked to say more rather
+      // than told their message was handed off.
+      await replyBySms(REPLY.CLARIFICATION);
     }
   } catch (err) {
     console.error('[Agent] handleTenantMessage error:', err.message);
     // An AI outage or a bad API key must not leave a texted-in tenant staring at a dead
-    // channel. They get the same holding message an escalation sends; the landlord still
-    // has the inbound row and this log to work from.
-    await replyBySms(ESCALATION_HOLDING_SMS);
+    // channel — but nothing was recorded for the landlord either, so promising a handoff
+    // would be a lie. Say what is actually true and let them retry.
+    await replyBySms(REPLY.TEMPORARY_FAILURE);
   }
 }
 

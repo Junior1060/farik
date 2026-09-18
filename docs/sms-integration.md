@@ -58,7 +58,8 @@ Request handling order:
    - **Tenant match** with an open `MaintenanceWorkflow` in
      `DIAGNOSTIC_QUESTIONS_SENT` → `maintenanceWorkflow.recordTenantReply()`.
    - **Tenant match**, no open diagnostic workflow → falls back to the existing
-     `Conversation`/`Message` flow and `agentService.handleTenantMessage()`
+     intent router below, and only then the `Conversation`/`Message` flow and
+     `agentService.handleTenantMessage()`
      (the same general-inquiry handling web-portal messages already use). The
      webhook passes `{ smsReplyTo }`, which is what makes the agent's answer go
      back over SMS as well as into the conversation thread — a tenant who texted
@@ -95,14 +96,57 @@ being touched. An undialable number is skipped and returns
 rows record the E.164 form actually dialled, so inbound and outbound rows for
 the same person share a phone number value.
 
+## Intent routing
+
+Before anything reaches the AI classifier, `backend/src/services/sms/inboundIntent.js`
+places the message with rules. Two reasons it is not a model call: "hi" and "??" should
+not cost one, and URGENT must still work when the AI is unreachable — the same reasoning
+behind `maintenanceDiagnostics.detectEmergency()`, whose rules this reuses rather than
+keeping a second copy of.
+
+`classifyIntent(body)` returns one of the intents below, or `null` meaning "substantive,
+but the rules cannot place it — let the AI decide". Order matters: safety first, then
+repairs, so "the heater is dead, can you call me?" still becomes a work order.
+
+| Intent | Matched by | What happens |
+|---|---|---|
+| `URGENT` | `detectEmergency()` rules (fire, gas, flooding, sparks, CO...) | Opens a repair; `startWorkflow` runs the audited emergency escalation |
+| `MAINTENANCE` | intake category table + conversational patterns | Opens a repair against the unit on the tenant's active lease |
+| `HUMAN_REQUEST` | "speak to", "call me", "a real person" | Real escalation, then the handoff text |
+| `PROPERTY_INFO` | rent / lease / deposit / balance wording | Handed to the AI — the only path with lease and payment data |
+| `GREETING` | message is *only* a greeting | Canned reply. No request, no escalation, no landlord notification |
+| `CLARIFICATION_NEEDED` | "??", "what's that", or ≤3 words with nothing to go on | Asks once; a second unresolved message in 24h becomes UNKNOWN |
+| `UNKNOWN` | not returned by the classifier | The router's promotion of a repeat `CLARIFICATION_NEEDED` — escalates |
+
+Two rules hold across every branch:
+
+- **Escalation means a person genuinely has to take over**, never merely that the model was
+  unsure. A low-confidence classification now asks the tenant to say more; it used to
+  announce a handoff.
+- **"We have passed this to your property manager" is only ever sent after the escalation
+  row exists.** `escalateWithHoldingText()` creates it first and checks the result —
+  `createEscalation()` returns `null` rather than throwing when the landlord is missing —
+  and every failure path falls back to a message that promises nothing.
+
+Ordering that must not change: STOP/START/HELP keywords are handled before intent routing,
+and an open `DIAGNOSTIC_QUESTIONS_SENT` workflow is checked before it too, so a "yes" that
+answers a diagnostic question is never re-read as a vague message. HELP is sent without a
+`tenantId` on purpose — passing one would let `optOutGuard` suppress the reply carriers
+require.
+
+The maintenance branch does not await `startWorkflow`: it can run AI triage, and Twilio
+gives the webhook about 15 seconds. The workflow texts the tenant itself (safety message or
+diagnostic questions), so the router only sends its own acknowledgement when the tenant has
+no SMS channel yet — otherwise they would be texted twice.
+
 ## Known limitation
 
-Starting a *brand-new* maintenance request purely from an inbound SMS with no
-existing `MaintenanceRequest` (i.e., a tenant texting in cold, with nothing
-in-flight) is not implemented this pass — it would require guessing which
-unit/lease the message concerns from phone number alone plus creating the
-`MaintenanceRequest` itself. Today's flow requires the request to exist first
-(web portal, or an existing open workflow); SMS handles the diagnostic
-follow-up and vendor coordination for that request. Extending intake to
-handle a cold "my sink is leaking" text with no prior request is a reasonable
-next increment.
+Cold intake now works: a tenant texting "my sink is leaking" with nothing
+in-flight gets a `MaintenanceRequest` opened against the unit on their active
+lease, which is read from the lease rather than inferred from the phone number.
+
+What remains: a tenant with **more than one** active lease is filed against the
+most recently started one, because a text carries nothing that identifies which
+unit it concerns. A tenant with **no** active lease gets an honest reply saying
+so rather than a request against a guessed unit. Asking "which unit?" over SMS
+when a tenant holds several leases is the next increment.

@@ -222,14 +222,32 @@ describe('handleTenantMessage — SMS reply leg', () => {
 
   // The exact production failure this was found by: an invalid ANTHROPIC_API_KEY made the
   // agent throw, the error was logged, and the tenant who texted in got nothing back.
-  it('still sends a holding text when the agent itself fails, rather than going silent', async () => {
+  it('answers when the agent itself fails, without claiming a handoff that never happened', async () => {
     aiClient.setMockHandler(() => { throw new Error('401 authentication_error: API key is invalid.'); });
 
     await agentService.handleTenantMessage(message, 'conv-1', { smsReplyTo: TENANT_PHONE });
 
     const sent = outboundSms();
     expect(sent).toHaveLength(1);
-    expect(sent[0].body).toMatch(/passed this to your property manager/i);
+    // Nothing was recorded for the landlord on this path, so the handoff promise would be
+    // a lie — the tenant is told the truth and asked to retry instead.
+    expect(sent[0].body).toMatch(/could not process that just now/i);
+    expect(sent[0].body).not.toMatch(/passed this to your property manager/i);
+    expect(mockPrisma.escalation?.create).toBeUndefined();
+  });
+
+  it('asks a tenant to say more when the AI is merely unsure, instead of escalating', async () => {
+    aiClient.setMockHandler(() => JSON.stringify({
+      category: 'GENERAL_INQUIRY', confidence: 'LOW', requiresEscalation: false,
+      autoResponse: null, escalationSummary: null, draftResponse: null, reason: 'unclear',
+    }));
+
+    await agentService.handleTenantMessage(message, 'conv-1', { smsReplyTo: TENANT_PHONE });
+
+    const sent = outboundSms();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toMatch(/tell me what you need help with/i);
+    expect(sent[0].body).not.toMatch(/passed this to your property manager/i);
   });
 
   it('stays silent on an agent failure for a web-portal message, which has no SMS channel', async () => {
