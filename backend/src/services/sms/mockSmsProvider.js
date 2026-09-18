@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const prisma = require('../../lib/prisma');
 const { isOptedOut } = require('./optOutGuard');
+const { toE164 } = require('./phoneNumber');
 
 async function sendSms({ to, body, tenantId, relatedWorkflowType, relatedWorkflowId }) {
   if (await isOptedOut(tenantId)) {
@@ -8,12 +9,20 @@ async function sendSms({ to, body, tenantId, relatedWorkflowType, relatedWorkflo
     return { providerMessageId: null, status: 'FAILED' };
   }
 
+  const dialTo = toE164(to);
+  if (!dialTo) {
+    // Unsendable number (no area code, or an unknown country) — skip rather than let the
+    // provider reject it, and record nothing, since no message ever existed.
+    console.log(`[SMS:mock] Skipped — "${to}" is not a dialable number`);
+    return { providerMessageId: null, status: 'FAILED' };
+  }
+
   const providerMessageId = `mock_${crypto.randomUUID()}`;
-  console.log(`[SMS:mock] -> ${to}: ${body}`);
+  console.log(`[SMS:mock] -> ${dialTo}: ${body}`);
   await prisma.smsMessage.create({
     data: {
       tenantId: tenantId || null,
-      phoneNumber: to,
+      phoneNumber: dialTo,
       direction: 'OUTBOUND',
       body,
       provider: 'mock',

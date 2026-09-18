@@ -3,10 +3,7 @@ const { getSmsProvider } = require('../services/sms/smsProvider');
 const maintenanceWorkflow = require('../services/workflows/maintenanceWorkflow');
 const vendorDispatchService = require('../services/vendorDispatchService');
 const agentService = require('../services/agentService');
-
-function normalizePhone(phone) {
-  return (phone || '').replace(/\D/g, '');
-}
+const { normalizePhone } = require('../services/sms/phoneNumber');
 
 async function findTenantByPhone(phone) {
   const target = normalizePhone(phone);

@@ -66,7 +66,7 @@ beforeEach(() => {
   mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: null }); // not opted out, by default
   // Auto-approval hands off to vendorDispatchService, so a vendor bench must exist.
   mockPrisma.vendor.findMany.mockResolvedValue([
-    { id: 'v1', name: 'Bob Plumbing', phone: '555-9999', isPreferred: true, avgResponseMinutes: 10 },
+    { id: 'v1', name: 'Bob Plumbing', phone: '306-555-9999', isPreferred: true, avgResponseMinutes: 10 },
   ]);
   mockPrisma.vendorContactAttempt.findMany.mockResolvedValue([]);
   mockPrisma.vendorContactAttempt.count.mockResolvedValue(0);
@@ -150,7 +150,7 @@ describe('recordTenantReply -> triageAndProceed', () => {
       expect.objectContaining({ data: expect.objectContaining({ vendorId: 'v1', attemptNumber: 1, status: 'SENT' }) }),
     );
     expect(mockPrisma.smsMessage.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ phoneNumber: '555-9999', direction: 'OUTBOUND' }) }),
+      expect.objectContaining({ data: expect.objectContaining({ phoneNumber: '+13065559999', direction: 'OUTBOUND' }) }),
     );
     const toStates = mockPrisma.workflowEvent.create.mock.calls.map((c) => c[0].data.toState);
     expect(toStates).toContain('VENDOR_SELECTION');

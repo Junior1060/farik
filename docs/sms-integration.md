@@ -49,9 +49,8 @@ Request handling order:
 2. `provider.parseInboundWebhook(req)` — extract `from`, `body`,
    `providerMessageId`.
 3. Look up the sender by phone number: `TenantProfile` first, then `Vendor` if
-   no tenant matched. Phone comparison normalizes both sides to digits-only
-   (`normalizePhone()`) so formatting differences (`+1`, dashes, spaces) don't
-   cause false negatives.
+   no tenant matched. Both sides go through `normalizePhone()` (see **Phone
+   number formats** below) so formatting differences don't cause false negatives.
 4. Write an `SmsMessage(direction: INBOUND)` row regardless of match, for audit.
 5. Route:
    - **Vendor match** with a pending `VendorContactAttempt` → parse a yes/no
@@ -63,6 +62,30 @@ Request handling order:
      (the same general-inquiry handling web-portal messages already use).
    - **No match** → a generic "contact your property manager" reply is sent.
      Property or tenant details are never exposed before verification.
+
+## Phone number formats
+
+Numbers are typed by hand in the app ("306-209-3660"), but Twilio speaks strict
+E.164 in both directions — it delivers `From` as `+13062093660` and rejects a
+`to` that isn't E.164 with error 21211. `backend/src/services/sms/phoneNumber.js`
+is the only place that gap is bridged, with two deliberately non-interchangeable
+helpers:
+
+- **`normalizePhone(phone)`** — a *comparison key*: digits only, with a leading
+  North American country code dropped, so a tenant stored as `3062093660`
+  matches the `+13062093660` Twilio sends. Used by the webhook's sender lookup.
+  Never dialled.
+- **`toE164(phone)`** — a *dialling address*. Returns `null` when the input
+  can't be made dialable (a 7-digit number has no area code; a leading `+` is
+  trusted as already-international rather than guessed at). Never compared.
+
+`toE164()` is applied inside both adapters' `sendSms()`, which is the same
+shared-choke-point pattern as `optOutGuard` — every existing call site passes
+`tenant.phone` or `vendor.phone` straight through and is covered without
+being touched. An undialable number is skipped and returns
+`status: 'FAILED'` rather than reaching the provider. Outbound `SmsMessage`
+rows record the E.164 form actually dialled, so inbound and outbound rows for
+the same person share a phone number value.
 
 ## Known limitation
 

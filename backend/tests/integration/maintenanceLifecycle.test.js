@@ -25,9 +25,10 @@ const aiClient = require('../../src/services/ai/aiClient');
 const maintenanceWorkflow = require('../../src/services/workflows/maintenanceWorkflow');
 const vendorDispatchService = require('../../src/services/vendorDispatchService');
 const workflowEngine = require('../../src/services/workflowEngine');
+const { toE164 } = require('../../src/services/sms/phoneNumber');
 
 const TENANT_PHONE = '+15551234567';
-const VENDOR_PHONE = '555-9999';
+const VENDOR_PHONE = '306-555-9999';
 
 function buildRequest(tenantOverrides = {}) {
   return {
@@ -78,9 +79,12 @@ function wireState({ workflow, request }) {
 }
 
 function outboundTo(phone) {
+  // Providers record the E.164 form they dialled, so compare canonically rather than
+  // forcing every fixture in this file to be written as +1XXXXXXXXXX.
+  const target = toE164(phone);
   return mockPrisma.smsMessage.create.mock.calls
     .map((c) => c[0].data)
-    .filter((m) => m.direction === 'OUTBOUND' && m.phoneNumber === phone);
+    .filter((m) => m.direction === 'OUTBOUND' && m.phoneNumber === target);
 }
 
 function allOutbound() {
@@ -249,13 +253,13 @@ describe('vendor acceptance', () => {
     });
     mockPrisma.vendorContactAttempt.count.mockResolvedValue(1);
     mockPrisma.vendor.findMany.mockResolvedValue([
-      { id: 'v2', name: 'Second Plumbing', phone: '555-0000', isPreferred: false, avgResponseMinutes: 20 },
+      { id: 'v2', name: 'Second Plumbing', phone: '306-555-0000', isPreferred: false, avgResponseMinutes: 20 },
     ]);
 
     await vendorDispatchService.handleVendorResponse('wf-1', 'v1', false);
 
     expect(transitionStates()).toEqual(['VENDOR_DECLINED', 'VENDOR_SELECTION', 'VENDOR_CONTACT_ATTEMPTED']);
-    expect(outboundTo('555-0000')).toHaveLength(1);
+    expect(outboundTo('306-555-0000')).toHaveLength(1);
     expect(mockPrisma.appointment.create).not.toHaveBeenCalled();
   });
 });

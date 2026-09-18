@@ -51,7 +51,7 @@ beforeEach(() => {
   mockPrisma.agentPolicyOverride.findUnique.mockResolvedValue(null);
   mockPrisma.agentPolicyDefault.findUnique.mockResolvedValue({ trustLevel: 'OPERATE_WITHIN_POLICY', settings: { maxVendorRetries: 2 } });
   mockPrisma.appointment.create.mockResolvedValue({ id: 'appt-1' });
-  mockPrisma.vendor.findUnique.mockResolvedValue({ id: 'v1', name: 'Bob Plumbing', phone: '555-9999' });
+  mockPrisma.vendor.findUnique.mockResolvedValue({ id: 'v1', name: 'Bob Plumbing', phone: '306-555-9999' });
   mockPrisma.tenantProfile.findUnique.mockResolvedValue({ smsOptOutAt: null }); // optOutGuard lookup
   mockPrisma.maintenanceRequest.updateMany.mockResolvedValue({ count: 1 });
 });
@@ -86,12 +86,12 @@ describe('selectEligibleVendor', () => {
 describe('dispatchNextVendor', () => {
   it('contacts the selected vendor via SMS and transitions APPROVED -> VENDOR_SELECTION -> VENDOR_CONTACT_ATTEMPTED', async () => {
     statefulWorkflow({ id: 'wf-1', maintenanceRequestId: 'req-1', state: 'APPROVED', category: 'PLUMBING_LEAK' });
-    mockPrisma.vendor.findMany.mockResolvedValue([{ id: 'v1', name: 'Bob Plumbing', phone: '555-9999', isPreferred: false, avgResponseMinutes: 10 }]);
+    mockPrisma.vendor.findMany.mockResolvedValue([{ id: 'v1', name: 'Bob Plumbing', phone: '306-555-9999', isPreferred: false, avgResponseMinutes: 10 }]);
 
     await vendorDispatchService.dispatchNextVendor('wf-1');
 
     expect(mockPrisma.smsMessage.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ phoneNumber: '555-9999' }) }),
+      expect.objectContaining({ data: expect.objectContaining({ phoneNumber: '+13065559999' }) }),
     );
     const toStates = mockPrisma.workflowEvent.create.mock.calls.map((c) => c[0].data.toState);
     expect(toStates).toEqual(['VENDOR_SELECTION', 'VENDOR_CONTACT_ATTEMPTED']);
@@ -135,7 +135,7 @@ describe('handleVendorResponse', () => {
 
     // The vendor is asked for availability; the tenant is told a vendor is confirmed.
     const outbound = mockPrisma.smsMessage.create.mock.calls.map((c) => c[0].data);
-    expect(outbound.find((m) => m.phoneNumber === '555-9999').body).toMatch(/two time windows/i);
+    expect(outbound.find((m) => m.phoneNumber === '+13065559999').body).toMatch(/two time windows/i);
     expect(outbound.find((m) => m.phoneNumber === '+15551234567').body).toMatch(/accepted your repair/i);
   });
 
@@ -159,7 +159,7 @@ describe('handleVendorResponse', () => {
     statefulWorkflow({ id: 'wf-1', maintenanceRequestId: 'req-1', state: 'VENDOR_CONTACT_ATTEMPTED', category: 'PLUMBING_LEAK' });
     mockPrisma.vendorContactAttempt.findFirst.mockResolvedValue({ id: 'attempt-1' });
     mockPrisma.vendorContactAttempt.count.mockResolvedValue(1); // 1 attempt so far, maxVendorRetries=2
-    mockPrisma.vendor.findMany.mockResolvedValue([{ id: 'v2', name: 'Second Plumbing', phone: '555-0000', isPreferred: false, avgResponseMinutes: 20 }]);
+    mockPrisma.vendor.findMany.mockResolvedValue([{ id: 'v2', name: 'Second Plumbing', phone: '306-555-0000', isPreferred: false, avgResponseMinutes: 20 }]);
 
     await vendorDispatchService.handleVendorResponse('wf-1', 'v1', false);
 

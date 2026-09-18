@@ -118,6 +118,31 @@ describe('POST /api/webhooks/sms', () => {
     );
   });
 
+
+  // The Add Tenant form stores whatever the landlord typed ("3062093660"), while Twilio
+  // always delivers E.164 ("+13062093660"). Comparing those raw sent every real tenant
+  // down the unmatched branch and replied "we could not match this number".
+  it('matches a tenant stored without a country code against the E.164 number Twilio sends', async () => {
+    mockPrisma.tenantProfile.findMany.mockResolvedValue([
+      { id: 'tenant-1', userId: 'user-1', phone: '3062093660', smsConsent: true },
+    ]);
+    mockPrisma.maintenanceWorkflow.findFirst.mockResolvedValue(null);
+    mockPrisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    const app = buildApp();
+
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+13062093660', Body: 'my sink is leaking', MessageSid: 'SM-e164' });
+
+    expect(res.status).toBe(200);
+    // Attribution on the inbound row is the proof the lookup matched.
+    expect(mockPrisma.smsMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ tenantId: 'tenant-1', direction: 'INBOUND' }) }),
+    );
+    const bodies = mockPrisma.smsMessage.create.mock.calls.map((c) => c[0].data.body);
+    expect(bodies.some((b) => /could not match this number/i.test(b))).toBe(false);
+  });
   it('routes a matched tenant reply into an open diagnostic workflow', async () => {
     mockPrisma.tenantProfile.findMany.mockResolvedValue([
       { id: 'tenant-1', userId: 'user-1', phone: '+15551234567' },

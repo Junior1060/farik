@@ -1,6 +1,7 @@
 const twilio = require('twilio');
 const prisma = require('../../lib/prisma');
 const { isOptedOut } = require('./optOutGuard');
+const { toE164 } = require('./phoneNumber');
 
 let client = null;
 function getClient() {
@@ -16,16 +17,24 @@ async function sendSms({ to, body, tenantId, relatedWorkflowType, relatedWorkflo
     return { providerMessageId: null, status: 'FAILED' };
   }
 
+  const dialTo = toE164(to);
+  if (!dialTo) {
+    // Unsendable number (no area code, or an unknown country) — skip rather than let the
+    // provider reject it, and record nothing, since no message ever existed.
+    console.log(`[SMS:twilio] Skipped — "${to}" is not a dialable number`);
+    return { providerMessageId: null, status: 'FAILED' };
+  }
+
   const message = await getClient().messages.create({
     from: process.env.TWILIO_FROM_NUMBER,
-    to,
+    to: dialTo,
     body,
   });
 
   await prisma.smsMessage.create({
     data: {
       tenantId: tenantId || null,
-      phoneNumber: to,
+      phoneNumber: dialTo,
       direction: 'OUTBOUND',
       body,
       provider: 'twilio',
