@@ -18,7 +18,9 @@ async function findTenantByPhone(phone) {
 async function findVendorByPhone(phone) {
   const target = normalizePhone(phone);
   if (!target) return null;
-  const vendors = await prisma.vendor.findMany({ where: { phone: { not: null } } });
+  // Vendor.phone is a required column, so there is nothing to filter out — a
+  // not-null filter on a non-nullable field is a Prisma validation error, not a no-op.
+  const vendors = await prisma.vendor.findMany();
   return vendors.find((v) => normalizePhone(v.phone) === target) || null;
 }
 

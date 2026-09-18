@@ -172,6 +172,24 @@ describe('POST /api/webhooks/sms', () => {
     );
   });
 
+  // Regression guard: Vendor.phone is a required column, so a `{ not: null }` filter is a
+  // Prisma validation error that only fires in production — the mocked client here accepts
+  // any argument shape, so assert the query itself rather than trusting the mock's return.
+  it('queries vendors without a nullability filter on the required phone column', async () => {
+    mockPrisma.tenantProfile.findMany.mockResolvedValue([]);
+    mockPrisma.vendor.findMany.mockResolvedValue([]);
+
+    const app = buildApp();
+    const res = await request(app)
+      .post('/api/webhooks/sms')
+      .type('form')
+      .send({ From: '+15550000000', Body: 'hello', MessageSid: 'SM-novendor' });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.vendor.findMany).toHaveBeenCalled();
+    const [args] = mockPrisma.vendor.findMany.mock.calls[0];
+    expect(args?.where?.phone).toBeUndefined();
+  });
   it('records opt-out and sends a confirmation when a matched tenant replies STOP, without touching any workflow', async () => {
     mockPrisma.tenantProfile.findMany.mockResolvedValue([{ id: 'tenant-1', userId: 'user-1', phone: '+15551234567' }]);
     const app = buildApp();
