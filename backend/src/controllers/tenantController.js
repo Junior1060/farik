@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const { z } = require('zod');
 const prisma = require('../lib/prisma');
 const { canLinkTenant } = require('./leaseController');
+const { createInviteToken, readInviteToken, inviteUrl } = require('../services/tenantInviteService');
 
 const tenantSchema = z.object({
   email: z.string().email(),
@@ -131,10 +132,10 @@ const lookupByEmail = async (req, res, next) => {
 
     // This lookup intentionally spans all landlords (used by onboarding/import to find
     // an existing user by email before attaching a new lease), but the caller has no
-    // established relationship with this tenant yet — never return phone/contact info
-    // here, only enough to confirm the account exists and link it.
-    const { phone, ...tenantProfileSafe } = user.tenantProfile;
-    res.json({ tenant: tenantProfileSafe, email: user.email });
+    // established relationship with this tenant yet — return only what is needed to
+    // confirm the account exists and link it. Nothing about phone, consent or opt-out.
+    const { id, firstName, lastName } = user.tenantProfile;
+    res.json({ tenant: { id, firstName, lastName }, email: user.email });
   } catch (err) {
     next(err);
   }
@@ -267,13 +268,44 @@ const create = async (req, res, next) => {
 
     await prisma.unit.update({ where: { id: unit.id }, data: { isOccupied: true } });
 
+    // A freshly reserved account can only be activated through its invitation link,
+    // so hand the landlord one straight away; the Tenants page can mint more later.
+    const invite = user.accountStatus === 'INVITED' ? inviteUrl(createInviteToken(user.id)) : null;
+
     res.status(201).json({
       tenant: { ...tenant, user: { email: user.email, accountStatus: user.accountStatus } },
       lease,
+      inviteUrl: invite,
     });
   } catch (err) {
     next(err);
   }
 };
 
-module.exports = { getAll, getOne, create, update, remove, lookupByEmail, attestSmsConsent };
+// GET /api/tenants/:id/invite — a fresh activation link for a tenant who has not set a
+// password yet. The link is a signed, expiring token bound to that account; the
+// landlord shares it however they like. Minting a new one does not revoke older links,
+// but every link stops working the moment the account is activated.
+const getInviteLink = async (req, res, next) => {
+  try {
+    const landlordId = req.user.landlordProfile.id;
+    const owns = await assertLandlordOwnsTenant(landlordId, req.params.id);
+    if (!owns) return res.status(404).json({ error: 'Tenant not found' });
+
+    const tenant = await prisma.tenantProfile.findUnique({
+      where: { id: req.params.id },
+      include: { user: { select: { id: true, email: true, accountStatus: true } } },
+    });
+    if (!tenant?.user) return res.status(404).json({ error: 'Tenant not found' });
+    if (tenant.user.accountStatus !== 'INVITED') {
+      return res.status(409).json({ error: 'This tenant has already activated their account.' });
+    }
+
+    const token = createInviteToken(tenant.user.id);
+    res.json({ url: inviteUrl(token), expiresAt: readInviteToken(token).expiresAt, email: tenant.user.email });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { getAll, getOne, create, update, remove, lookupByEmail, attestSmsConsent, getInviteLink };

@@ -12,6 +12,13 @@ const authenticate = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Only session tokens carry userId. Other tokens signed with the same secret
+    // (tenant invitation links) declare a `purpose` and must never act as a session.
+    if (decoded.purpose || !decoded.userId) {
+      return res.status(401).json({ error: 'Unauthorized – invalid token' });
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
       include: {

@@ -6,9 +6,10 @@ jest.mock('../../src/lib/prisma', () => mockPrisma);
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const authController = require('../../src/controllers/authController');
+const { createInviteToken } = require('../../src/services/tenantInviteService');
 
-function mockReqRes(body = {}) {
-  const req = { body };
+function mockReqRes(body = {}, params = {}) {
+  const req = { body, params };
   const res = {
     statusCode: 200,
     body: null,
@@ -127,7 +128,7 @@ describe('register — self-serve landlord signup', () => {
   });
 });
 
-describe('register — tenant activating an INVITED account', () => {
+describe('register — tenant activation requires the invitation link', () => {
   const invited = {
     id: 'user-7',
     email: 'alice@example.com',
@@ -136,21 +137,28 @@ describe('register — tenant activating an INVITED account', () => {
     landlordProfile: null,
     tenantProfile: { id: 'tp-7', firstName: 'A.', lastName: 'Morgan', phone: '+13065550100' },
   };
+  const inviteToken = createInviteToken('user-7');
+  const activation = { fullName: 'Alice Morgan', email: 'Alice@Example.com', password: 'a-real-password', role: 'TENANT', inviteToken };
 
-  it('sets a real password, marks the account ACTIVE, and keeps the linked profile', async () => {
-    mockPrisma.user.findUnique.mockResolvedValue(invited);
+  beforeEach(() => {
+    // Lookups by id resolve the invited account; lookups by email (the landlord path)
+    // find nothing unless a test says otherwise.
+    mockPrisma.user.findUnique.mockImplementation(({ where }) => Promise.resolve(where.id === 'user-7' ? invited : null));
     mockPrisma.user.update.mockImplementation(({ data }) => Promise.resolve({
       ...invited,
       accountStatus: data.accountStatus,
       tenantProfile: { ...invited.tenantProfile, ...data.tenantProfile.update },
     }));
+  });
 
-    const { req, res, next } = mockReqRes({ fullName: 'Alice Morgan', email: 'Alice@Example.com', password: 'a-real-password', role: 'TENANT' });
+  it('activates the account the link was issued for: real password, ACTIVE, linked profile kept', async () => {
+    const { req, res, next } = mockReqRes(activation);
     await authController.register(req, res, next);
 
     expect(next).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'user-7' } }));
 
     const { where, data } = mockPrisma.user.update.mock.calls[0][0];
     expect(where).toEqual({ id: 'user-7' });
@@ -158,6 +166,52 @@ describe('register — tenant activating an INVITED account', () => {
     expect(await bcrypt.compare('a-real-password', data.password)).toBe(true);
     expect(data.tenantProfile.update).toMatchObject({ firstName: 'Alice', lastName: 'Morgan', phone: '+13065550100' });
     expect(res.body.user.profile.id).toBe('tp-7');
+    expect(jwt.verify(res.body.token, process.env.JWT_SECRET).userId).toBe('user-7');
+  });
+
+  it('refuses a tenant signup with no invitation (403) and never creates a free-floating tenant account', async () => {
+    const { inviteToken: _omit, ...noToken } = activation;
+    const { req, res, next } = mockReqRes(noToken);
+    await authController.register(req, res, next);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error).toMatch(/invitation link/i);
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    // Knowing the email alone must not be enough: nothing was even looked up by email.
+    expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a session token for the same user', jwt.sign({ userId: 'user-7' }, process.env.JWT_SECRET)],
+    ['a token signed with another secret', jwt.sign({ purpose: 'tenant-invite', inviteUserId: 'user-7' }, 'not-our-secret')],
+    ['an expired invitation', jwt.sign({ purpose: 'tenant-invite', inviteUserId: 'user-7' }, process.env.JWT_SECRET, { expiresIn: -10 })],
+    ['garbage', 'not-a-token'],
+  ])('refuses %s with 403 and no account change', async (_label, token) => {
+    const { req, res, next } = mockReqRes({ ...activation, inviteToken: token });
+    await authController.register(req, res, next);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error).toMatch(/invalid or has expired/i);
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a link whose account is already ACTIVE — a used invitation is dead', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue({ ...invited, accountStatus: 'ACTIVE' });
+    const { req, res, next } = mockReqRes(activation);
+    await authController.register(req, res, next);
+
+    expect(res.statusCode).toBe(403);
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a link presented with a different email than the account it was issued for', async () => {
+    const { req, res, next } = mockReqRes({ ...activation, email: 'mallory@example.com' });
+    await authController.register(req, res, next);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.error).toMatch(/email address your landlord has on file/i);
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
   });
 
   it('does not let a landlord signup take over an INVITED tenant account', async () => {
@@ -167,15 +221,38 @@ describe('register — tenant activating an INVITED account', () => {
 
     expect(res.statusCode).toBe(409);
     expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('getInvite — who an invitation link is for', () => {
+  const invited = {
+    id: 'user-7', email: 'alice@example.com', role: 'TENANT', accountStatus: 'INVITED',
+    landlordProfile: null, tenantProfile: { id: 'tp-7', firstName: 'Alice', lastName: 'Morgan' },
+  };
+
+  it('returns the email and name for a live link so the page can lock the email', async () => {
+    mockPrisma.user.findUnique.mockResolvedValue(invited);
+    const { req, res, next } = mockReqRes({}, { token: createInviteToken('user-7') });
+    await authController.getInvite(req, res, next);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ email: 'alice@example.com', firstName: 'Alice', lastName: 'Morgan' });
+    expect(new Date(res.body.expiresAt).getTime()).toBeGreaterThan(Date.now());
   });
 
-  it('does not let anyone take over an ACTIVE tenant account', async () => {
-    mockPrisma.user.findUnique.mockResolvedValue({ ...invited, accountStatus: 'ACTIVE' });
-    const { req, res, next } = mockReqRes({ fullName: 'Alice Morgan', email: 'alice@example.com', password: 'a-real-password', role: 'TENANT' });
-    await authController.register(req, res, next);
+  it.each([
+    ['an already-active account', { ...invited, accountStatus: 'ACTIVE' }, createInviteToken('user-7')],
+    ['a landlord account', { ...invited, role: 'LANDLORD' }, createInviteToken('user-7')],
+    ['a deleted account', null, createInviteToken('user-7')],
+    ['a session token', invited, jwt.sign({ userId: 'user-7' }, process.env.JWT_SECRET)],
+  ])('404s for %s without revealing anything', async (_label, found, token) => {
+    mockPrisma.user.findUnique.mockResolvedValue(found);
+    const { req, res, next } = mockReqRes({}, { token });
+    await authController.getInvite(req, res, next);
 
-    expect(res.statusCode).toBe(409);
-    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toEqual({ error: expect.stringMatching(/invalid or has expired/i) });
   });
 });
 

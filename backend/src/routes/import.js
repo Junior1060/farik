@@ -1,33 +1,29 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 const { authenticate, requireLandlord } = require('../middleware/auth');
 const { costSensitiveLimiter } = require('../middleware/rateLimiter');
+const { uploadDir } = require('../config/uploads');
 const ctrl = require('../controllers/importController');
 
 const router = express.Router();
 
-const UPLOADS_BASE = path.join(__dirname, '../../uploads');
+// Spreadsheets and AI-ingest files are temp files, deleted by the controller as soon
+// as they are parsed. Documents (lease PDFs etc.) are kept and served back to the
+// landlord who uploaded them through routes/uploads.js.
+const ONBOARDING_DIR = uploadDir('onboarding');
+const SPREADSHEETS_DIR = uploadDir('spreadsheets');
+const DOCUMENTS_DIR = uploadDir('documents');
 
-// Ensure upload subdirs exist
-['spreadsheets', 'documents', 'onboarding'].forEach((sub) => {
-  const dir = path.join(UPLOADS_BASE, sub);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-});
+const randomName = (req, file, cb) => {
+  const ext = path.extname(file.originalname).toLowerCase();
+  cb(null, `${crypto.randomUUID()}${ext}`);
+};
 
 // ── Universal AI ingest upload (any single file, or text-only) ────────────────
-const onboardingStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, path.join(UPLOADS_BASE, 'onboarding')),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${crypto.randomUUID()}${ext}`);
-  },
-});
-
 const onboardingUpload = multer({
-  storage: onboardingStorage,
+  storage: multer.diskStorage({ destination: (req, file, cb) => cb(null, ONBOARDING_DIR), filename: randomName }),
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['.xlsx', '.xls', '.csv', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.docx', '.doc'];
@@ -37,16 +33,8 @@ const onboardingUpload = multer({
 });
 
 // ── Spreadsheet upload (single file) ──────────────────────────────────────────
-const spreadsheetStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, path.join(UPLOADS_BASE, 'spreadsheets')),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${crypto.randomUUID()}${ext}`);
-  },
-});
-
 const spreadsheetUpload = multer({
-  storage: spreadsheetStorage,
+  storage: multer.diskStorage({ destination: (req, file, cb) => cb(null, SPREADSHEETS_DIR), filename: randomName }),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['.xlsx', '.xls', '.csv'];
@@ -56,16 +44,8 @@ const spreadsheetUpload = multer({
 });
 
 // ── Document upload (multiple files) ──────────────────────────────────────────
-const documentStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, path.join(UPLOADS_BASE, 'documents')),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${crypto.randomUUID()}${ext}`);
-  },
-});
-
 const documentUpload = multer({
-  storage: documentStorage,
+  storage: multer.diskStorage({ destination: (req, file, cb) => cb(null, DOCUMENTS_DIR), filename: randomName }),
   limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png', '.webp'];

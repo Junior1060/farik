@@ -1,3 +1,5 @@
+const multer = require('multer');
+
 const errorHandler = (err, req, res, next) => {
   console.error(err);
 
@@ -6,6 +8,17 @@ const errorHandler = (err, req, res, next) => {
       error: 'Validation error',
       details: err.errors.map((e) => ({ field: e.path.join('.'), message: e.message })),
     });
+  }
+
+  // Multer's own limit errors carry no status, so without this a 12 MB photo would
+  // surface as a generic 500 in production instead of telling the person what to fix.
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'That file is too large.'
+      : err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE'
+        ? 'Too many files were attached.'
+        : 'The upload could not be processed.';
+    return res.status(400).json({ error: message });
   }
 
   if (err.code === 'P2002') {

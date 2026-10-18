@@ -339,6 +339,12 @@ const confirm = async (req, res, next) => {
           // ── Find or create User + TenantProfile ────────────────────────────
           let user = await prisma.user.findUnique({ where: { email: row.tenantEmail.toLowerCase() } });
 
+          // Same rule as POST /api/tenants: a landlord's login must never also become a
+          // tenant profile, which would hang a lease off an account of the wrong kind.
+          if (user && user.role === 'LANDLORD') {
+            throw new Error(`${row.tenantEmail} belongs to a landlord account and cannot be imported as a tenant.`);
+          }
+
           if (!user) {
             const tempPw = await bcrypt.hash(Math.random().toString(36).slice(2) + Date.now(), 10);
             user = await prisma.user.create({

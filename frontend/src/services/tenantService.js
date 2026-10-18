@@ -15,6 +15,14 @@ export const attestTenantSmsConsent = (id) => api.put(`/tenants/${id}/sms-consen
 /**
  * Landlord adds a tenant and their first lease in one call. If nobody has
  * registered with that email yet, an INVITED account is reserved for them.
- * Resolves with { tenant, lease }.
+ * Resolves with { tenant, lease, inviteUrl } — inviteUrl is null when the
+ * tenant already had an active account.
  */
 export const createTenant = (data) => api.post('/tenants', data).then((r) => r.data);
+
+/**
+ * A fresh activation link for a tenant who has not set a password yet. The only way
+ * an invited tenant can get in — there is no activation by email alone.
+ * Resolves with { url, expiresAt, email }; 409 once the account is active.
+ */
+export const getTenantInviteLink = (id) => api.get(`/tenants/${id}/invite`).then((r) => r.data);

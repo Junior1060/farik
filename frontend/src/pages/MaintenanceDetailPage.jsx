@@ -11,7 +11,7 @@ import InvoiceApprovalCard from '../components/maintenance/InvoiceApprovalCard';
 import useFetch from '../hooks/useFetch';
 import { getMaintenanceRequestDetail, approveMaintenanceWorkflow, cancelMaintenanceWorkflow } from '../services/maintenanceService';
 import { uploadInvoice } from '../services/invoiceApi';
-import { assetUrl } from '../services/api';
+import ProtectedImage from '../components/ui/ProtectedImage';
 import { formatRelative, fullName } from '../utils/formatters';
 
 const STATE_LABELS = {
@@ -146,9 +146,7 @@ export default function MaintenanceDetailPage() {
           {request.photos?.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-3">
               {request.photos.map((src, i) => (
-                <a key={i} href={assetUrl(src)} target="_blank" rel="noreferrer">
-                  <img src={assetUrl(src)} alt={`Photo ${i + 1}`} className="w-16 h-16 rounded-lg object-cover border border-slate-200" />
-                </a>
+                <ProtectedImage key={i} src={src} alt={`Photo ${i + 1}`} className="w-16 h-16 rounded-lg object-cover border border-slate-200" />
               ))}
             </div>
           )}

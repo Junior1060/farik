@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const { z } = require('zod');
 const prisma = require('../lib/prisma');
+const { PASSWORD_MIN_LENGTH } = require('./authController');
 
 const landlordUpdateSchema = z.object({
   firstName: z.string().min(1).optional(),
@@ -15,9 +16,11 @@ const tenantUpdateSchema = z.object({
   phone: z.string().optional(),
 });
 
+// Same floor as signup (authController.PASSWORD_MIN_LENGTH); a password change must
+// not be a way to end up with a weaker password than registration allows.
 const passwordSchema = z.object({
   currentPassword: z.string().min(1),
-  newPassword: z.string().min(6),
+  newPassword: z.string().min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`).max(128),
 });
 
 const getProfile = async (req, res, next) => {

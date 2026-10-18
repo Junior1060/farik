@@ -42,18 +42,46 @@
   by the model, so it can't be manipulated into saying something unsafe or
   claiming Farik contacted emergency services (which it never does).
 
-## Carried-forward limitations (not addressed this pass)
+## Production-readiness pass (October 2026)
 
-- File uploads (maintenance photos, invoices) remain on local disk, served
-  unauthenticated via `express.static('/uploads')` — same as the pre-existing
-  maintenance-photo pattern. Anyone with a stored filename can view the file.
-  This is a known gap in the existing app, not introduced by this work; a
-  proper fix (signed URLs / private cloud storage) is out of scope per the
-  agreed plan.
-- No rate limiting has been added yet to the new `/api/webhooks/sms`,
-  `/api/invoices`, or `/api/appointments` routes. Planned for Phase 5
-  (`backend/src/middleware/rateLimiter.js`, not yet built) — until then, these
-  routes have the same exposure as every other unthrottled route in the app.
+- **Tenant activation requires an invitation token.** `POST /api/auth/register`
+  with `role: TENANT` only activates the INVITED account a signed, 14-day
+  `inviteToken` was issued for, and only with that account's email. Previously
+  anyone who knew a tenant's email could claim the account at `/signup/tenant`,
+  or pre-register the email so a later lease linked to them. Tenants can no
+  longer self-register at all (`tenantInviteService.js`, `authController.js`).
+  `authenticate` also refuses any token carrying a `purpose` claim, so an
+  invitation can never be presented as a session.
+- **Uploads are no longer public.** `/uploads/:folder/:file` requires a session
+  and an ownership match scoped like the owning controller (tenant on the
+  request, or landlord on the property; invoices/documents landlord-only), 404
+  on every refusal, and rejects path traversal before any lookup
+  (`routes/uploads.js`, integration-tested).
+- **Stripe webhook is idempotent and checks settlement.** A redelivered
+  `checkout.session.completed` is acknowledged without a second ledger row;
+  `payment_status !== 'paid'` is ignored; a second settled session for an
+  already-PAID payment is recorded but logged at error level and marked
+  `duplicateOfSession` in the ledger. Checkout reuses a payment's still-open
+  session rather than minting another, and returns 409 while a completed one
+  awaits its webhook.
+- **Boot guard.** Production refuses to start with a missing, placeholder, or
+  short `JWT_SECRET`, or without `FRONTEND_URL` (`config/env.js`).
+- **Per-account cost limiter** on tenant message send, maintenance request
+  creation and the agent trigger (`perUserCostLimiter`, keyed by user id).
+- `GET /api/tenants/lookup` now returns only `id`, `firstName`, `lastName`.
+  Password change enforces the same 8-character floor as signup. The import
+  wizard refuses to turn a landlord login into a tenant profile.
+
+## Carried-forward limitations
+
+- Upload durability still depends on `UPLOADS_DIR` being a persistent disk on
+  Render; object storage with signed URLs remains the longer-term option.
+- `/api/invoices` and `/api/appointments` are authenticated but not separately
+  rate-limited; `/api/webhooks/sms` uses `costSensitiveLimiter`.
+- No password reset flow exists yet; a locked-out landlord has no self-service
+  recovery. This needs SMTP configured and is the top auth follow-up.
+- Invitation links are stateless: minting a new one does not revoke an earlier
+  one until the account is activated.
 - No centralized query-scoping/RLS layer exists; every controller (old and
   new) must remember to filter by `landlordId`/`tenantId` itself. This pass
   followed the existing convention rather than introducing a new one, but it

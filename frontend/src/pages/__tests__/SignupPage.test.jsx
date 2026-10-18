@@ -4,14 +4,17 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import SignupPage from '../SignupPage';
 
-const { mockRegister } = vi.hoisted(() => ({ mockRegister: vi.fn() }));
+const { mockRegister, mockGetInvite } = vi.hoisted(() => ({ mockRegister: vi.fn(), mockGetInvite: vi.fn() }));
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ register: mockRegister }),
 }));
+vi.mock('../../services/inviteService', () => ({
+  getInvite: mockGetInvite,
+}));
 
-function renderSignup(role = 'LANDLORD') {
+function renderSignup(route = '/signup') {
   return render(
-    <MemoryRouter initialEntries={[role === 'TENANT' ? '/signup/tenant' : '/signup']}>
+    <MemoryRouter initialEntries={[route]}>
       <Routes>
         <Route path="/signup" element={<SignupPage role="LANDLORD" />} />
         <Route path="/signup/tenant" element={<SignupPage role="TENANT" />} />
@@ -32,6 +35,7 @@ function fillValid() {
 // function" (the mock itself) to call after each test.
 beforeEach(() => {
   mockRegister.mockReset();
+  mockGetInvite.mockReset();
 });
 
 describe('SignupPage', () => {
@@ -92,6 +96,7 @@ describe('SignupPage', () => {
       companyName: 'Blake Rentals',
       role: 'LANDLORD',
     });
+    expect(mockGetInvite).not.toHaveBeenCalled();
   });
 
   it('shows a real loading state and blocks double submission', async () => {
@@ -136,17 +141,68 @@ describe('SignupPage', () => {
     expect(alert).toHaveTextContent(expected);
     expect(alert.textContent).not.toMatch(/Prisma|connection refused|String must/i);
   });
+});
 
-  it('activates a tenant account with the TENANT role and sends them to the portal', async () => {
-    mockRegister.mockResolvedValue({ id: 'u2', role: 'TENANT' });
-    renderSignup('TENANT');
+describe('SignupPage — tenant activation', () => {
+  const INVITE = { email: 'alice@example.com', firstName: 'Alice', lastName: 'Morgan', expiresAt: '2099-01-01T00:00:00.000Z' };
+
+  it('refuses to show a form without an invitation link: knowing an email is not enough', () => {
+    renderSignup('/signup/tenant');
+
     expect(screen.getByRole('heading', { level: 1, name: 'Activate your tenant account' })).toBeInTheDocument();
+    expect(screen.getByText(/open the invitation link they sent you/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^password$/i)).toBeNull();
+    expect(screen.queryByLabelText(/^email$/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /activate|create/i })).toBeNull();
+    expect(mockGetInvite).not.toHaveBeenCalled();
+    expect(mockRegister).not.toHaveBeenCalled();
+  });
+
+  it('explains an invalid or expired link and offers nothing to submit', async () => {
+    mockGetInvite.mockRejectedValue({ response: { status: 404, data: { error: 'nope' } } });
+    renderSignup('/signup/tenant?invite=stale-token');
+
+    expect(await screen.findByText(/invalid or has expired/i)).toBeInTheDocument();
+    expect(mockGetInvite).toHaveBeenCalledWith('stale-token');
+    expect(screen.queryByLabelText(/^password$/i)).toBeNull();
+    expect(mockRegister).not.toHaveBeenCalled();
+  });
+
+  it('locks the email to the one on file, prefills the name, and sends the token with the password', async () => {
+    mockGetInvite.mockResolvedValue(INVITE);
+    mockRegister.mockResolvedValue({ id: 'u2', role: 'TENANT' });
+    renderSignup('/signup/tenant?invite=tok-123');
+
+    const email = await screen.findByLabelText(/^email$/i);
+    expect(email).toHaveValue('alice@example.com');
+    expect(email).toHaveAttribute('readonly');
+    expect(screen.getByLabelText(/full name/i)).toHaveValue('Alice Morgan');
     expect(screen.queryByLabelText(/company/i)).toBeNull();
 
-    fillValid();
-    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'a-real-password' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Activate account' }));
 
     expect(await screen.findByText('tenant portal destination')).toBeInTheDocument();
-    await waitFor(() => expect(mockRegister).toHaveBeenCalledWith(expect.objectContaining({ role: 'TENANT', companyName: undefined })));
+    expect(mockRegister).toHaveBeenCalledWith({
+      fullName: 'Alice Morgan',
+      email: 'alice@example.com',
+      password: 'a-real-password',
+      companyName: undefined,
+      role: 'TENANT',
+      inviteToken: 'tok-123',
+    });
+  });
+
+  it('shows the backend\'s reason when activation is refused', async () => {
+    mockGetInvite.mockResolvedValue(INVITE);
+    mockRegister.mockRejectedValue({ response: { status: 403, data: { error: 'This invitation link is invalid or has expired. Ask your landlord for a new one.' } } });
+    renderSignup('/signup/tenant?invite=tok-123');
+
+    await screen.findByLabelText(/^email$/i);
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'a-real-password' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Activate account' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/invalid or has expired/i);
   });
 });

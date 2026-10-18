@@ -1,8 +1,13 @@
 require('dotenv').config();
+const { assertProductionEnv } = require('./config/env');
+
+// Fail fast on a production boot that could never be safe (a forgeable session
+// secret, no frontend origin) instead of serving traffic with it.
+assertProductionEnv();
+
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const path = require('path');
 const errorHandler = require('./middleware/errorHandler');
 const { startScheduler } = require('./services/schedulerService');
 
@@ -55,8 +60,10 @@ app.use('/api/appointments', require('./routes/appointments'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/import', require('./routes/import'));
 
-// Serve uploaded documents (read-only)
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Uploaded files (maintenance photos, invoices, lease documents). A session and an
+// ownership match are required for every file — nothing under /uploads is public.
+// See routes/uploads.js; the storage location is config/uploads.js (UPLOADS_DIR).
+app.use('/uploads', require('./routes/uploads'));
 
 // 404
 app.use((req, res) => res.status(404).json({ error: 'Route not found' }));

@@ -23,7 +23,7 @@ import { getMaintenanceRequests, createMaintenanceRequest } from '../services/ma
 import { getConversations, getThread, sendMessage } from '../services/messageService';
 import { formatDate, formatRelative, formatCurrency, fullName, getInitials, daysUntil, daysUntilLabel } from '../utils/formatters';
 import { useForm } from 'react-hook-form';
-import api, { assetUrl } from '../services/api';
+import ProtectedImage from '../components/ui/ProtectedImage';
 
 /**
  * The number tenants text, or null when no SMS provider is configured for this
@@ -445,13 +445,12 @@ const TenantPortalPage = () => {
                       {req.photos?.length > 0 && (
                         <div className="flex flex-wrap gap-2 mt-3">
                           {req.photos.map((src, i) => (
-                            <a key={i} href={assetUrl(src)} target="_blank" rel="noreferrer">
-                              <img
-                                src={assetUrl(src)}
-                                alt={`Photo ${i + 1}`}
-                                className="w-16 h-16 rounded-lg object-cover border border-slate-200 hover:opacity-90 transition-opacity"
-                              />
-                            </a>
+                            <ProtectedImage
+                              key={i}
+                              src={src}
+                              alt={`Photo ${i + 1}`}
+                              className="w-16 h-16 rounded-lg object-cover border border-slate-200 hover:opacity-90 transition-opacity"
+                            />
                           ))}
                         </div>
                       )}

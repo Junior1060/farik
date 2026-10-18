@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { authenticate, requireLandlord } = require('../middleware/auth');
+const { perUserCostLimiter } = require('../middleware/rateLimiter');
 const ctrl = require('../controllers/agentController');
 
 router.use(authenticate, requireLandlord);
@@ -26,6 +27,8 @@ router.delete('/vendors/:id', ctrl.deleteVendor);
 router.get('/timeline', ctrl.getTimeline);
 router.post('/timeline/cancel', ctrl.cancelScheduled);
 
-router.post('/trigger', ctrl.triggerAgentRun);
+// Runs every scheduled check immediately (notices, emails). Capped so one account
+// cannot hammer it.
+router.post('/trigger', perUserCostLimiter, ctrl.triggerAgentRun);
 
 module.exports = router;

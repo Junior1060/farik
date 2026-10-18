@@ -271,7 +271,8 @@ const TenantLeaseForm = ({
       {mode === 'new' && (
         <p className="text-xs text-slate-500 leading-relaxed">
           If your tenant already has a Farik account with this email, it is linked. Otherwise their account is
-          reserved as invited, and they activate it by creating a tenant account with the same email.
+          reserved as invited: copy their invitation link from the Tenants page and send it to them so they can
+          set a password. The link is the only way to activate the account.
         </p>
       )}
 

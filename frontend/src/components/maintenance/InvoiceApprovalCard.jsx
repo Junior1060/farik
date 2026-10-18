@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { FileText, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { approveInvoice, rejectInvoice } from '../../services/invoiceApi';
-import { assetUrl } from '../../services/api';
+import { openProtectedFile } from '../../services/api';
 import { formatDate } from '../../utils/formatters';
 
 const STATUS_STYLES = {
@@ -46,9 +46,16 @@ export default function InvoiceApprovalCard({ invoice, approvedEstimateMax, onCh
             <FileText size={16} className="text-slate-500" />
           </div>
           <div className="min-w-0">
-            <a href={assetUrl(`/uploads/invoices/${invoice.storedName}`)} target="_blank" rel="noreferrer" className="text-sm font-medium text-brand-600 hover:underline truncate block">
+            {/* Invoices are served only to the owning landlord's session, so a plain
+                link cannot open one — fetch with the token and open the result. */}
+            <button
+              type="button"
+              onClick={() => openProtectedFile(`/uploads/invoices/${invoice.storedName}`).catch(() => {})}
+              title="Open invoice"
+              className="text-sm font-medium text-brand-600 hover:underline truncate block text-left max-w-full"
+            >
               {invoice.originalName}
-            </a>
+            </button>
             <p className="text-xs text-slate-400">Uploaded {formatDate(invoice.createdAt)}</p>
           </div>
         </div>

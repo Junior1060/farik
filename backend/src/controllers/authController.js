@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { z } = require('zod');
 const prisma = require('../lib/prisma');
+const { readInviteToken } = require('../services/tenantInviteService');
 
 const PASSWORD_MIN_LENGTH = 8;
 
@@ -29,6 +30,9 @@ const registerSchema = z
     phone: z.string().trim().max(40).optional(),
     companyName: z.string().trim().max(120).optional(),
     role: z.enum(['LANDLORD', 'TENANT']).default('LANDLORD'),
+    // Required when role is TENANT: the signed link the landlord shared
+    // (services/tenantInviteService.js). Landlords never send one.
+    inviteToken: z.string().min(1).max(2000).optional(),
   })
   .refine((d) => d.fullName || d.firstName, {
     message: 'Please enter your name.',
@@ -39,6 +43,10 @@ const loginSchema = z.object({
   email: z.string().trim().min(1).max(200).transform(normalizeEmail),
   password: z.string().min(1),
 });
+
+const INVITE_REQUIRED = 'Tenant accounts are created by your landlord. Open the invitation link they sent you to set your password.';
+const INVITE_INVALID = 'This invitation link is invalid or has expired. Ask your landlord for a new one.';
+const INVITE_EMAIL_MISMATCH = 'Use the email address your landlord has on file for you. This invitation was issued for a different address.';
 
 const generateToken = (userId) =>
   jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
@@ -66,6 +74,18 @@ async function findUserByEmail(email) {
   });
 }
 
+/**
+ * The INVITED tenant account an invitation token was issued for, or null. A used link
+ * is dead: once the account is ACTIVE nothing can be done with the token again.
+ */
+async function findInvitedTenant(inviteToken) {
+  const invite = readInviteToken(inviteToken);
+  if (!invite) return null;
+  const user = await prisma.user.findUnique({ where: { id: invite.userId }, include: USER_INCLUDE });
+  if (!user || user.role !== 'TENANT' || user.accountStatus !== 'INVITED') return null;
+  return user;
+}
+
 const publicUser = (user) => ({
   id: user.id,
   email: user.email,
@@ -80,25 +100,26 @@ const register = async (req, res, next) => {
       ? splitFullName(data.fullName)
       : { firstName: data.firstName, lastName: data.lastName || '' };
 
-    const existing = await findUserByEmail(data.email);
+    if (data.role === 'TENANT') {
+      // Tenants only ever *activate* an account their landlord created, and only through
+      // the invitation link. Activation by email alone would let anyone who knew a
+      // tenant's address take over their lease, payments and messages.
+      if (!data.inviteToken) return res.status(403).json({ error: INVITE_REQUIRED });
 
-    if (existing) {
-      // A landlord (or an import) may have created this tenant's record before the
-      // tenant ever signed up. That account is INVITED with a placeholder password;
-      // the tenant's own sign-up activates it instead of being refused.
-      const activating = data.role === 'TENANT' && existing.role === 'TENANT' && existing.accountStatus === 'INVITED';
-      if (!activating) {
-        return res.status(409).json({ error: 'An account with this email already exists.' });
+      const invited = await findInvitedTenant(data.inviteToken);
+      if (!invited) return res.status(403).json({ error: INVITE_INVALID });
+      if (normalizeEmail(invited.email) !== data.email) {
+        return res.status(403).json({ error: INVITE_EMAIL_MISMATCH });
       }
 
       const hashed = await bcrypt.hash(data.password, 10);
       const user = await prisma.user.update({
-        where: { id: existing.id },
+        where: { id: invited.id },
         data: {
           password: hashed,
           accountStatus: 'ACTIVE',
-          tenantProfile: existing.tenantProfile
-            ? { update: { firstName, lastName, phone: data.phone ?? existing.tenantProfile.phone } }
+          tenantProfile: invited.tenantProfile
+            ? { update: { firstName, lastName, phone: data.phone ?? invited.tenantProfile.phone } }
             : { create: { firstName, lastName, phone: data.phone } },
         },
         include: USER_INCLUDE,
@@ -106,19 +127,20 @@ const register = async (req, res, next) => {
       return res.status(201).json({ token: generateToken(user.id), user: publicUser(user) });
     }
 
-    const hashed = await bcrypt.hash(data.password, 10);
+    const existing = await findUserByEmail(data.email);
+    if (existing) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
 
-    const profileCreate = data.role === 'LANDLORD'
-      ? { landlordProfile: { create: { firstName, lastName, phone: data.phone, companyName: data.companyName || null } } }
-      : { tenantProfile: { create: { firstName, lastName, phone: data.phone } } };
+    const hashed = await bcrypt.hash(data.password, 10);
 
     const user = await prisma.user.create({
       data: {
         email: data.email,
         password: hashed,
-        role: data.role,
+        role: 'LANDLORD',
         accountStatus: 'ACTIVE',
-        ...profileCreate,
+        landlordProfile: { create: { firstName, lastName, phone: data.phone, companyName: data.companyName || null } },
       },
       include: USER_INCLUDE,
     });
@@ -153,4 +175,25 @@ const me = async (req, res) => {
   res.json({ user: publicUser(req.user) });
 };
 
-module.exports = { register, login, me, PASSWORD_MIN_LENGTH, normalizeEmail };
+/**
+ * GET /api/auth/invite/:token — who an invitation link is for, so the activation page
+ * can show (and lock) the email and prefill the name. 404 for anything that is not a
+ * live invitation; the message is the same one activation itself would give.
+ */
+const getInvite = async (req, res, next) => {
+  try {
+    const invited = await findInvitedTenant(req.params.token);
+    if (!invited) return res.status(404).json({ error: INVITE_INVALID });
+    const { expiresAt } = readInviteToken(req.params.token);
+    res.json({
+      email: invited.email,
+      firstName: invited.tenantProfile?.firstName || '',
+      lastName: invited.tenantProfile?.lastName || '',
+      expiresAt,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = { register, login, me, getInvite, PASSWORD_MIN_LENGTH, normalizeEmail };

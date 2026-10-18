@@ -34,7 +34,20 @@ SMS_PROVIDER=mock           # or "twilio" once you have real credentials
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_FROM_NUMBER=
+
+UPLOADS_DIR=/var/data/uploads   # a mounted persistent disk — see below
 ```
+
+**Production boot guard.** With `NODE_ENV=production` the server refuses to start
+unless `JWT_SECRET` is set, is not a known placeholder, and is at least 32
+characters, and `FRONTEND_URL` is set (`backend/src/config/env.js`). Generate the
+secret with `openssl rand -base64 48`. A failed boot prints every problem at once.
+
+**Uploads need a persistent disk.** Render's default filesystem is discarded on
+every deploy, so photos, invoices and lease documents vanish at the next release.
+Add a Disk to the backend service (Render dashboard → service → Disks), mount it
+at a path such as `/var/data/uploads`, and set `UPLOADS_DIR` to that path. Files
+are only served to signed-in owners (`backend/src/routes/uploads.js`).
 
 The app runs fully without any of the SMS/Twilio variables set — Autopilot's
 maintenance workflow uses the mock SMS provider by default (logs instead of
@@ -75,10 +88,9 @@ npm run dev
 
 ## Known limitations carried into production
 
-- Maintenance photos and invoices are stored on local disk
-  (`backend/uploads/`), served unauthenticated. On Render this is
-  ephemeral-ish storage — files can be lost on redeploy. This is a pre-existing
-  limitation, not introduced by this work; migrating to S3/Supabase Storage
-  with signed URLs is a reasonable follow-up but was out of scope for this pass.
+- Maintenance photos, invoices and lease documents are stored on local disk
+  under `UPLOADS_DIR` and served only to signed-in owners. Durability depends on
+  that directory being a mounted persistent disk (above); object storage
+  (S3/R2) remains a reasonable later step but is no longer required for safety.
 - No horizontal scaling support for `node-cron` jobs — fine for the current
   single-instance deployment.

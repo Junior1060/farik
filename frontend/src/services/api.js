@@ -47,4 +47,31 @@ export const assetUrl = (path) => {
   return `${API_ORIGIN}${path.startsWith('/') ? '' : '/'}${path}`;
 };
 
+/**
+ * Uploaded files sit behind the API's session check, so a plain <img src> or <a href>
+ * cannot load them: the browser would send no token. Fetch with the token and hand
+ * back an object URL. Callers revoke it when they are done with it.
+ */
+export const fetchProtectedFile = async (path) => {
+  const res = await api.get(assetUrl(path), { responseType: 'blob' });
+  return URL.createObjectURL(res.data);
+};
+
+/**
+ * Opens a protected file in a new tab. The tab is opened synchronously inside the
+ * click so popup blockers allow it, then pointed at the blob once it has downloaded.
+ */
+export const openProtectedFile = async (path) => {
+  const win = window.open('', '_blank');
+  try {
+    const url = await fetchProtectedFile(path);
+    if (win) win.location.href = url;
+    else window.location.assign(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) {
+    if (win) win.close();
+    throw err;
+  }
+};
+
 export default api;

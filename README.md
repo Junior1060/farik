@@ -165,6 +165,7 @@ farik/
 POST   /api/auth/register
 POST   /api/auth/login
 GET    /api/auth/me
+GET    /api/auth/invite/:token   (who a tenant invitation link is for)
 
 GET    /api/dashboard/summary
 GET    /api/dashboard/activity
@@ -172,6 +173,7 @@ GET    /api/dashboard/activity
 GET    /api/tenants
 POST   /api/tenants            (landlord adds a tenant + first lease)
 GET    /api/tenants/:id
+GET    /api/tenants/:id/invite (activation link for an INVITED tenant)
 PUT    /api/tenants/:id
 DELETE /api/tenants/:id
 
@@ -213,19 +215,26 @@ call, or approval step.
 ### Authentication
 
 ```
-POST /api/auth/register   { fullName | firstName+lastName, email, password, companyName?, role? }
-POST /api/auth/login      { email, password }
-GET  /api/auth/me         (Bearer token)
+POST /api/auth/register       { fullName | firstName+lastName, email, password, companyName?, role?, inviteToken? }
+POST /api/auth/login          { email, password }
+GET  /api/auth/me             (Bearer token)
+GET  /api/auth/invite/:token  → { email, firstName, lastName, expiresAt } or 404
 ```
 
 - Emails are trimmed and lower-cased before lookup and before storage, on both
   register and login, so `John@example.com` and `john@example.com` are one account.
   Login also falls back to a case-insensitive match for accounts created before
   this rule.
-- Passwords must be at least 8 characters.
-- Registration returns `201 { token, user }`; duplicates return `409`.
-- Frontend: `/signup` (landlord), `/signup/tenant` (tenant activation), `/login`.
-  `/register` redirects to `/signup`. Landlords land on `/onboarding` after signup.
+- Passwords must be at least 8 characters (signup and password change).
+- Landlord registration returns `201 { token, user }`; duplicates return `409`.
+- Tenant registration (`role: TENANT`) requires `inviteToken` and only ever
+  *activates* an INVITED account (see below). Without a valid token it is `403`.
+- Frontend: `/signup` (landlord), `/signup/tenant?invite=…` (tenant activation),
+  `/login`. `/register` redirects to `/signup`. Landlords land on `/onboarding`.
+- In production the server refuses to start when `JWT_SECRET` is missing, still
+  the placeholder, or shorter than 32 characters, or when `FRONTEND_URL` is unset
+  (`backend/src/config/env.js`). Every session and invitation link is signed with
+  that secret, so a guessable one is a full account takeover.
 
 ### Onboarding
 
@@ -253,10 +262,34 @@ POST /api/tenants      { firstName, lastName, email, phone?, unitId, startDate, 
 ### Tenant account lifecycle
 
 `users.accountStatus` is `ACTIVE` or `INVITED`. Tenants created by a landlord or
-by the import wizard are `INVITED` and cannot log in until they activate: signing
-up at `/signup/tenant` with the same email sets their password and flips the
-account to `ACTIVE` instead of failing as a duplicate. Invitation emails are not
-sent yet; the landlord shares the link.
+by the import wizard are `INVITED` and cannot log in until they activate.
+
+Activation needs an **invitation link**, not just the email address. The landlord
+gets one from **Tenants → Copy invite link** (or `GET /api/tenants/:id/invite`,
+also returned as `inviteUrl` by `POST /api/tenants`) and sends it to the tenant.
+The link is `/signup/tenant?invite=<token>`: a signed token bound to that account
+that expires after 14 days and stops working the moment the account is `ACTIVE`
+(`backend/src/services/tenantInviteService.js`). The activation page checks the
+token, locks the email to the one on file, and sends the token with the new
+password. Invitation emails are not sent automatically yet.
+
+Tenants cannot self-register from scratch; a stray `/signup/tenant` visit explains
+that the link is required. This closes two takeovers: claiming an invited account
+by knowing its email, and pre-registering a victim's email so a later lease gets
+linked to the attacker.
+
+### Uploaded files
+
+Maintenance photos, invoices and lease documents are stored under `UPLOADS_DIR`
+(default `backend/uploads/`) and served from `/uploads/:folder/:file` **only to a
+signed-in user who owns the record** — the tenant who filed the request or the
+landlord whose property it is on; invoices and documents are landlord-only. Every
+refusal is a `404`. The frontend loads them with the session token
+(`ProtectedImage`, `openProtectedFile`) because a bare `<img src>` cannot.
+
+On Render the default filesystem is wiped on every deploy. **Mount a persistent
+disk and set `UPLOADS_DIR` to it** before real customers upload anything, or the
+files will not survive the next release.
 
 ### Demo credentials on /login
 

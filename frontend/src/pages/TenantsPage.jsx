@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, Plus, Edit, Trash2, Eye, Phone, Mail, MessageSquareOff, MessageSquare } from 'lucide-react';
+import { Users, Plus, Edit, Trash2, Eye, Phone, Mail, MessageSquareOff, MessageSquare, Link2, Check } from 'lucide-react';
 import TenantLeaseForm from '../components/tenants/TenantLeaseForm';
 import { getProperties } from '../services/propertyService';
 import PageHeader from '../components/ui/PageHeader';
@@ -10,9 +10,56 @@ import EmptyState from '../components/ui/EmptyState';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import Modal from '../components/ui/Modal';
 import useFetch from '../hooks/useFetch';
-import { getTenants, updateTenant, deleteTenant, attestTenantSmsConsent } from '../services/tenantService';
+import { getTenants, updateTenant, deleteTenant, attestTenantSmsConsent, getTenantInviteLink } from '../services/tenantService';
 import { formatDate, fullName } from '../utils/formatters';
 import { useForm } from 'react-hook-form';
+
+/**
+ * The only way an invited tenant gets in. There is no activation by email alone, so a
+ * tenant who has not set a password needs this link from their landlord. Each click
+ * mints a fresh 14-day link; every link dies the moment the account is activated.
+ */
+const InviteLinkButton = ({ tenant }) => {
+  const [state, setState] = useState('idle'); // idle | busy | copied | error
+
+  const copyLink = async () => {
+    setState('busy');
+    try {
+      const { url } = await getTenantInviteLink(tenant.id);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        setState('copied');
+        setTimeout(() => setState('idle'), 2500);
+      } else {
+        // No clipboard API (plain http, older browsers): let them copy it by hand.
+        window.prompt(`Invitation link for ${tenant.firstName}:`, url);
+        setState('idle');
+      }
+    } catch {
+      setState('error');
+    }
+  };
+
+  if (state === 'copied') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700" role="status">
+        <Check size={12} aria-hidden="true" /> Link copied
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={copyLink}
+      disabled={state === 'busy'}
+      title="Copy the link this tenant uses to set their password"
+      className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline disabled:opacity-50"
+    >
+      <Link2 size={12} aria-hidden="true" />
+      {state === 'busy' ? 'Getting link…' : state === 'error' ? 'Could not get link, try again' : 'Copy invite link'}
+    </button>
+  );
+};
 
 /**
  * Whether Farik may text this tenant, and how that permission was obtained.
@@ -205,6 +252,9 @@ const TenantsPage = () => {
                               )}
                             </p>
                             <p className="text-xs text-slate-400">{tenant.user?.email}</p>
+                            {tenant.user?.accountStatus === 'INVITED' && (
+                              <div className="mt-1"><InviteLinkButton tenant={tenant} /></div>
+                            )}
                           </div>
                         </div>
                       </td>
